@@ -1,0 +1,13 @@
+transformers
+datasets
+peft
+bitsandbytes
+sympy
+z3-solver
+wandb
+vllm
+evaluate
+pyyaml
+pdfplumber
+pypdf
+

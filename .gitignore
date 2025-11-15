@@ -1,0 +1,70 @@
+# Model weights and checkpoints
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.h5
+models/
+checkpoints/
+*.pkl
+
+# W&B logs and runs
+wandb/
+.wandb/
+wandb_logs/
+
+# Data files
+data/raw/*
+data/processed/*
+*.csv
+*.json
+*.jsonl
+*.parquet
+*.arrow
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Results
+results/
+!results/.gitkeep
+
+# Outputs
+outputs/
+!outputs/.gitkeep
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+

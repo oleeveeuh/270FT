@@ -1,0 +1,24 @@
+data_dir: "data/raw"
+processed_dir: "data/processed"
+
+models:
+  - name: "meta-llama/Llama-3-8B-Instruct"
+    output_dir: "models/llama3_lora"
+  - name: "Qwen/Qwen2.5-7B-Instruct"
+    output_dir: "models/qwen3_lora"
+
+training:
+  epochs: 3
+  learning_rate: 2e-4
+  batch_size: 4
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+
+evaluation:
+  metrics: ["exact_match", "bleu", "symbolic_equivalence"]
+
+logging:
+  use_wandb: true
+  project: "270FT"
+

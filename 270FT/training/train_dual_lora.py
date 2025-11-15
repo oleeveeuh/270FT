@@ -1,0 +1,469 @@
+"""
+Training script for dual QLoRA fine-tuning on LLaMA 3 and Qwen 3 models.
+"""
+
+import os
+import json
+import yaml
+from pathlib import Path
+from typing import Dict, List, Any, Optional
+import torch
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    TrainingArguments,
+    Trainer,
+    BitsAndBytesConfig,
+    DataCollatorForLanguageModeling,
+)
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from datasets import load_dataset, Dataset
+import wandb
+from evaluate import load as load_metric
+
+
+def load_config(config_path: str) -> Dict[str, Any]:
+    """Load configuration from YAML file."""
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+    return config
+
+
+def format_prompt(prompt: str, response: str) -> str:
+    """Format prompt and response in the required template."""
+    return f"### Question:\n{prompt}\n\n### Solution:\n{response}"
+
+
+def load_and_tokenize_dataset(
+    data_path: str,
+    tokenizer: AutoTokenizer,
+    max_length: int = 2048,
+) -> Dataset:
+    """
+    Load dataset from JSON/JSONL/CSV and tokenize with the specified format.
+    
+    Expected format: {"prompt": "...", "response": "..."} or CSV with these columns.
+    Supports JSONL (one JSON object per line) format.
+    """
+    data_path = Path(data_path)
+    
+    # Try to load as JSONL first (one JSON object per line)
+    if data_path.suffix == ".jsonl":
+        data = []
+        with open(data_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        item = json.loads(line)
+                        data.append(item)
+                    except json.JSONDecodeError:
+                        continue
+        dataset = Dataset.from_list(data)
+    # Try to load as JSON
+    elif data_path.suffix == ".json":
+        with open(data_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            dataset = Dataset.from_list(data)
+        else:
+            # If it's a dict with a list key, extract it
+            dataset = Dataset.from_list(list(data.values())[0] if data else [])
+    else:
+        # Assume CSV
+        dataset = load_dataset("csv", data_files=str(data_path))["train"]
+    
+    def tokenize_function(examples):
+        # Handle different column names
+        prompt_col = "prompt" if "prompt" in examples else "question"
+        response_col = "response" if "response" in examples else "solution"
+        
+        prompts = examples[prompt_col] if isinstance(examples[prompt_col], list) else [examples[prompt_col]]
+        responses = examples[response_col] if isinstance(examples[response_col], list) else [examples[response_col]]
+        
+        texts = [format_prompt(p, r) for p, r in zip(prompts, responses)]
+        
+        # Tokenize
+        tokenized = tokenizer(
+            texts,
+            truncation=True,
+            max_length=max_length,
+            padding="max_length",
+            return_tensors="pt",
+        )
+        
+        # For causal LM, labels are the same as input_ids
+        tokenized["labels"] = tokenized["input_ids"].clone()
+        
+        return tokenized
+    
+    tokenized_dataset = dataset.map(
+        tokenize_function,
+        batched=True,
+        remove_columns=dataset.column_names,
+    )
+    
+    return tokenized_dataset
+
+
+def load_test_data(test_path: str) -> List[Dict[str, str]]:
+    """Load test data from JSON or JSONL file."""
+    test_path_obj = Path(test_path)
+    
+    if test_path_obj.suffix == ".jsonl":
+        data = []
+        with open(test_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        item = json.loads(line)
+                        data.append(item)
+                    except json.JSONDecodeError:
+                        continue
+        return data
+    else:
+        # JSON format
+        with open(test_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+        # If it's a dict, try to extract a list
+        return list(data.values())[0] if data else []
+
+
+def create_compute_metrics_fn(tokenizer, metrics_config):
+    """Create a compute_metrics function for Trainer."""
+    def compute_metrics(eval_pred):
+        """Compute evaluation metrics."""
+        predictions, labels = eval_pred
+        
+        # Decode predictions and labels
+        decoded_preds = tokenizer.batch_decode(predictions, skip_special_tokens=True)
+        decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+        
+        results = {}
+        
+        # Exact match
+        if "exact_match" in metrics_config:
+            exact_matches = sum(1 for p, l in zip(decoded_preds, decoded_labels) if p.strip() == l.strip())
+            results["eval_exact_match"] = exact_matches / len(decoded_preds) if decoded_preds else 0.0
+        
+        # BLEU score
+        if "bleu" in metrics_config:
+            try:
+                bleu_metric = load_metric("bleu")
+                # BLEU expects list of lists for references
+                references = [[label.split()] for label in decoded_labels]
+                predictions_list = [pred.split() for pred in decoded_preds]
+                bleu_results = bleu_metric.compute(
+                    predictions=predictions_list,
+                    references=references,
+                )
+                results["eval_bleu"] = bleu_results.get("bleu", 0.0)
+            except Exception as e:
+                print(f"Warning: BLEU computation failed: {e}")
+                results["eval_bleu"] = 0.0
+        
+        # Symbolic equivalence (placeholder - would need SymPy/Z3 implementation)
+        if "symbolic_equivalence" in metrics_config:
+            # This would require actual symbolic verification logic
+            results["eval_symbolic_equivalence"] = 0.0  # Placeholder
+        
+        return results
+    
+    return compute_metrics
+
+
+def train_model(
+    model_name: str,
+    output_dir: str,
+    config: Dict[str, Any],
+    train_dataset: Dataset,
+    validation_data_path: Optional[str] = None,
+    test_data_path: Optional[str] = None,
+) -> Dict[str, float]:
+    """
+    Train a single model with QLoRA.
+    
+    Returns:
+        Dictionary of evaluation metrics
+    """
+    print(f"\n{'='*60}")
+    print(f"Training model: {model_name}")
+    print(f"{'='*60}\n")
+    
+    # Initialize W&B if enabled
+    if config["logging"]["use_wandb"]:
+        wandb.init(
+            project=config["logging"]["project"],
+            name=f"{model_name.split('/')[-1]}_qlora",
+            config={
+                "model": model_name,
+                **config["training"],
+            },
+        )
+    
+    # Configure 4-bit quantization
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_use_double_quant=True,
+    )
+    
+    # Load model and tokenizer
+    print(f"Loading model and tokenizer...")
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        quantization_config=bnb_config,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+    
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    
+    # Set pad token if not present
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+    
+    # Prepare model for k-bit training
+    model = prepare_model_for_kbit_training(model)
+    
+    # Configure LoRA
+    lora_config = LoraConfig(
+        r=config["training"]["lora_r"],
+        lora_alpha=config["training"]["lora_alpha"],
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        lora_dropout=config["training"]["lora_dropout"],
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+    
+    # Apply LoRA
+    model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()
+    
+    # Load validation data (for evaluation during training)
+    validation_dataset = None
+    if validation_data_path:
+        print(f"Loading validation data from {validation_data_path}...")
+        validation_dataset = load_and_tokenize_dataset(
+            validation_data_path,
+            tokenizer,
+            max_length=2048,
+        )
+        print(f"Validation dataset size: {len(validation_dataset)}")
+    else:
+        print("Warning: No validation data provided. Using test set for evaluation (not recommended).")
+        if test_data_path:
+            validation_dataset = load_and_tokenize_dataset(
+                test_data_path,
+                tokenizer,
+                max_length=2048,
+            )
+    
+    # Training arguments
+    training_args = TrainingArguments(
+        output_dir=output_dir,
+        num_train_epochs=config["training"]["epochs"],
+        per_device_train_batch_size=config["training"]["batch_size"],
+        per_device_eval_batch_size=config["training"]["batch_size"],
+        learning_rate=config["training"]["learning_rate"],
+        fp16=True,
+        logging_steps=10,
+        save_steps=500,
+        eval_strategy="epoch",
+        save_total_limit=3,
+        load_best_model_at_end=True,
+        report_to="wandb" if config["logging"]["use_wandb"] else None,
+        run_name=f"{model_name.split('/')[-1]}_qlora",
+    )
+    
+    # Data collator
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer,
+        mlm=False,
+    )
+    
+    # Create compute_metrics function
+    compute_metrics_fn = create_compute_metrics_fn(tokenizer, config["evaluation"]["metrics"])
+    
+    # Create trainer
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=validation_dataset,
+        data_collator=data_collator,
+        compute_metrics=compute_metrics_fn,
+    )
+    
+    # Train
+    print(f"Starting training...")
+    trainer.train()
+    
+    # Evaluate on validation set (for final metrics)
+    if validation_dataset:
+        print(f"Evaluating on validation set...")
+        eval_results = trainer.evaluate()
+    else:
+        print("Warning: No validation set available for evaluation")
+        eval_results = {}
+    
+    # Evaluate on test set (separate, for final assessment)
+    if test_data_path and validation_dataset:  # Only if we have separate validation
+        print(f"\nEvaluating on test set (final assessment)...")
+        test_data = load_test_data(test_data_path)
+        test_dataset = load_and_tokenize_dataset(
+            test_data_path,
+            tokenizer,
+            max_length=2048,
+        )
+        test_results = trainer.evaluate(eval_dataset=test_dataset)
+        # Add test metrics with 'test_' prefix
+        for key, value in test_results.items():
+            eval_results[f"test_{key}"] = value
+        print(f"Test set results: {test_results}")
+    
+    # Save adapter
+    print(f"Saving adapter to {output_dir}...")
+    model.save_pretrained(output_dir)
+    tokenizer.save_pretrained(output_dir)
+    
+    # Finish W&B run
+    if config["logging"]["use_wandb"]:
+        wandb.finish()
+    
+    return eval_results
+
+
+def main():
+    """Main training function."""
+    # Get project root
+    project_root = Path(__file__).parent.parent.parent
+    config_path = project_root / "270FT" / "configs" / "training_config.yaml"
+    
+    # Load config
+    config = load_config(str(config_path))
+    
+    # Setup paths
+    data_dir = project_root / "270FT" / config["data_dir"]
+    processed_dir = project_root / "270FT" / config["processed_dir"]
+    
+    # Find training data (look for train.jsonl, train.json, or train.csv)
+    train_data_path = None
+    for ext in [".jsonl", ".json", ".csv"]:
+        # Check processed directory first (preferred)
+        potential_path = processed_dir / f"train{ext}"
+        if potential_path.exists():
+            train_data_path = str(potential_path)
+            break
+        # Fallback to data_dir
+        potential_path = data_dir / f"train{ext}"
+        if potential_path.exists():
+            train_data_path = str(potential_path)
+            break
+    
+    if train_data_path is None:
+        raise FileNotFoundError(
+            f"No training data found. Checked {processed_dir} and {data_dir}. "
+            f"Expected train.jsonl, train.json, or train.csv"
+        )
+    
+    # Find validation data (optional, but recommended)
+    validation_data_path = None
+    for ext in [".jsonl", ".json", ".csv"]:
+        potential_path = processed_dir / f"validation{ext}"
+        if potential_path.exists():
+            validation_data_path = str(potential_path)
+            break
+        potential_path = data_dir / f"validation{ext}"
+        if potential_path.exists():
+            validation_data_path = str(potential_path)
+            break
+    
+    if validation_data_path:
+        print(f"Found validation data: {validation_data_path}")
+    else:
+        print("Warning: No validation data found. Will use test set for evaluation (not recommended).")
+    
+    # Find test data
+    test_data_path = None
+    for ext in [".jsonl", ".json", ".csv"]:
+        potential_path = processed_dir / f"test{ext}"
+        if potential_path.exists():
+            test_data_path = str(potential_path)
+            break
+        potential_path = data_dir / f"test{ext}"
+        if potential_path.exists():
+            test_data_path = str(potential_path)
+            break
+    
+    if test_data_path is None:
+        raise FileNotFoundError(
+            f"No test data found. Checked {processed_dir} and {data_dir}. "
+            f"Expected test.jsonl, test.json, or test.csv"
+        )
+    
+    # Load and tokenize training dataset (will be reused for both models)
+    print("Loading training dataset...")
+    # We'll tokenize separately for each model since tokenizers differ
+    
+    # Train each model
+    all_results = {}
+    
+    for model_config in config["models"]:
+        model_name = model_config["name"]
+        output_dir = project_root / "270FT" / model_config["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Load tokenizer to tokenize dataset
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        
+        # Tokenize dataset for this model
+        train_dataset = load_and_tokenize_dataset(train_data_path, tokenizer)
+        
+        # Train model
+        results = train_model(
+            model_name=model_name,
+            output_dir=str(output_dir),
+            config=config,
+            train_dataset=train_dataset,
+            validation_data_path=validation_data_path,
+            test_data_path=test_data_path,
+        )
+        
+        all_results[model_name] = results
+    
+    # Print summary
+    print(f"\n{'='*60}")
+    print("TRAINING SUMMARY")
+    print(f"{'='*60}\n")
+    
+    for model_name, results in all_results.items():
+        print(f"Model: {model_name}")
+        eval_loss = results.get('eval_loss', 'N/A')
+        if isinstance(eval_loss, (int, float)):
+            print(f"  Evaluation Loss: {eval_loss:.4f}")
+        else:
+            print(f"  Evaluation Loss: {eval_loss}")
+        for metric in config["evaluation"]["metrics"]:
+            metric_key = f"eval_{metric}"
+            if metric_key in results:
+                value = results[metric_key]
+                if isinstance(value, (int, float)):
+                    print(f"  {metric}: {value:.4f}")
+                else:
+                    print(f"  {metric}: {value}")
+        print()
+    
+    print(f"{'='*60}")
+
+
+if __name__ == "__main__":
+    main()
+
