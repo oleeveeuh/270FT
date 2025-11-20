@@ -1,4 +1,4 @@
-# 🎓 Fine-Tuning LLMs for Algorithmic Problem Solving
+# Fine-Tuning LLMs for Algorithmic Problem Solving
 
 > **A research project exploring efficient fine-tuning of large language models for generating structured algorithmic content including pseudocode, proofs, and mathematical derivations using educational materials.**
 
@@ -9,23 +9,23 @@
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
-- [Overview](#-overview)
-- [Key Results](#-key-results)
-- [Skills & Technologies](#-skills--technologies)
-- [Project Highlights](#-project-highlights)
-- [Architecture](#-architecture)
-- [Quick Start](#-quick-start)
-- [Data Preparation](#-data-preparation)
-- [Training](#-training)
-- [Evaluation](#-evaluation)
-- [Lessons Learned](#-lessons-learned)
-- [Future Work](#-future-work)
+- [Overview](#overview)
+- [Key Results](#key-results)
+- [Skills & Technologies](#skills--technologies)
+- [Project Highlights](#project-highlights)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+- [Data Preparation](#data-preparation)
+- [Training](#training)
+- [Evaluation](#evaluation)
+- [Lessons Learned](#lessons-learned)
+- [Future Work](#future-work)
 
 ---
 
-## 🎯 Overview
+## Overview
 
 This project demonstrates how to fine-tune large language models (LLMs) to generate mathematically rigorous algorithmic content. By leveraging educational materials—lecture slides, textbook pages, and homework solutions—the system learns to produce structured outputs including:
 
@@ -54,7 +54,7 @@ This project addresses these challenges through **parameter-efficient fine-tunin
 
 ---
 
-## 🏆 Key Results
+## Key Results
 
 ### Model Performance Comparison
 
@@ -83,7 +83,7 @@ This project addresses these challenges through **parameter-efficient fine-tunin
 
 ---
 
-## 💻 Skills & Technologies
+## Skills & Technologies
 
 ### Core Technologies
 
@@ -98,12 +98,12 @@ This project addresses these challenges through **parameter-efficient fine-tunin
 
 ### Technical Skills Demonstrated
 
-- ✅ **Parameter-Efficient Fine-Tuning**: Implemented QLoRA for memory-efficient training
-- ✅ **Data Engineering**: Built preprocessing pipeline for multiple formats (PDF, JSON, CSV, TXT)
-- ✅ **Model Evaluation**: Automated metrics + human-in-the-loop evaluation system
-- ✅ **Symbolic Mathematics**: Integration of SymPy for mathematical verification
-- ✅ **Data Splitting Strategies**: Temporal and unit-based splitting to prevent data leakage
-- ✅ **Software Engineering**: Modular codebase with configuration management
+- **Parameter-Efficient Fine-Tuning**: Implemented QLoRA for memory-efficient training
+- **Data Engineering**: Built preprocessing pipeline for multiple formats (PDF, JSON, CSV, TXT)
+- **Model Evaluation**: Automated metrics + human-in-the-loop evaluation system
+- **Symbolic Mathematics**: Integration of SymPy for mathematical verification
+- **Data Splitting Strategies**: Temporal and unit-based splitting to prevent data leakage
+- **Software Engineering**: Modular codebase with configuration management
 
 ### Frameworks & Libraries
 
@@ -120,7 +120,7 @@ pdfplumber        # PDF text extraction
 
 ---
 
-## ✨ Project Highlights
+## Project Highlights
 
 ### What Makes This Project Unique
 
@@ -132,16 +132,16 @@ pdfplumber        # PDF text extraction
 
 ### Key Features
 
-- 📚 **Multi-Format Data Processing**: Handles PDFs, JSON, CSV, and plain text
-- 🔄 **Smart Data Splitting**: Automatic temporal/unit-based splitting for proper evaluation
-- 🎯 **Symbolic Verification**: Automated mathematical correctness checking
-- 👥 **Human Evaluation**: Professor/expert rating system (1-5 scale) for comprehensive assessment
-- 📊 **Rich Visualizations**: Side-by-side comparison of automated vs human metrics
-- 🔍 **Duplicate Detection**: Utility to detect and handle duplicate content across datasets
+- **Multi-Format Data Processing**: Handles PDFs, JSON, CSV, and plain text
+- **Smart Data Splitting**: Automatic temporal/unit-based splitting for proper evaluation
+- **Symbolic Verification**: Automated mathematical correctness checking
+- **Human Evaluation**: Professor/expert rating system (1-5 scale) for comprehensive assessment
+- **Rich Visualizations**: Side-by-side comparison of automated vs human metrics
+- **Duplicate Detection**: Utility to detect and handle duplicate content across datasets
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ### Pipeline Overview
 
@@ -220,7 +220,7 @@ pdfplumber        # PDF text extraction
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -248,7 +248,7 @@ wandb login
 
 ### Running the Pipeline
 
-1. **Prepare your data** (see [Data Preparation](#-data-preparation))
+1. **Prepare your data** (see [Data Preparation](#data-preparation))
 2. **Run preprocessing**:
    ```bash
    python 270FT/preprocess/load_and_prepare.py
@@ -268,7 +268,7 @@ wandb login
 
 ---
 
-## 📊 Data Preparation
+## Data Preparation
 
 ### Supported Data Formats
 
@@ -327,7 +327,7 @@ For detailed data format specifications and splitting strategies, see the [full 
 
 ---
 
-## 🎓 Training
+## Training
 
 ### Configuration
 
@@ -365,7 +365,7 @@ This will:
 
 ---
 
-## 📈 Evaluation
+## Evaluation
 
 ### Automated Metrics
 
@@ -408,7 +408,7 @@ The `visualize_results.ipynb` notebook provides:
 
 ---
 
-## 📚 Project Structure
+## Project Structure
 
 ```
 270FT/
@@ -439,7 +439,7 @@ The `visualize_results.ipynb` notebook provides:
 
 ---
 
-## 💡 Lessons Learned
+## Lessons Learned
 
 ### What Worked Well
 
@@ -464,7 +464,7 @@ The `visualize_results.ipynb` notebook provides:
 
 ---
 
-## 🔮 Future Work
+## Future Work
 
 ### Planned Improvements
 
@@ -495,7 +495,7 @@ The `visualize_results.ipynb` notebook provides:
 
 ---
 
-## 📖 Detailed Documentation
+## Detailed Documentation
 
 <details>
 <summary><b>Data Preparation Details</b></summary>
@@ -609,7 +609,7 @@ Base Case (n=1): The sum of the first natural number is 1...
 
 ---
 
-## 📄 Citation
+## Citation
 
 If you use this project in your research, please cite:
 
@@ -624,13 +624,13 @@ If you use this project in your research, please cite:
 
 ---
 
-## 📝 License
+## License
 
 [Specify your license here]
 
 ---
 
-## 👤 Author
+## Author
 
 **Your Name**
 - GitHub: [@yourusername](https://github.com/yourusername)
@@ -639,7 +639,7 @@ If you use this project in your research, please cite:
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - Hugging Face for the Transformers library
 - Meta and Qwen teams for the base models
