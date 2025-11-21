@@ -320,19 +320,43 @@ def main():
     
     # Setup paths
     processed_dir = project_root / "270FT" / config["processed_dir"]
-    test_data_path = processed_dir / "test.json"
     
-    if not test_data_path.exists():
-        raise FileNotFoundError(f"Test data not found at {test_data_path}")
+    # Try to find test data (JSONL or JSON)
+    test_data_path = None
+    for ext in [".jsonl", ".json"]:
+        potential_path = processed_dir / f"test{ext}"
+        if potential_path.exists():
+            test_data_path = potential_path
+            break
+    
+    if test_data_path is None:
+        raise FileNotFoundError(
+            f"Test data not found. Checked {processed_dir / 'test.jsonl'} and {processed_dir / 'test.json'}"
+        )
     
     # Load test data
     print(f"Loading test data from {test_data_path}...")
-    with open(test_data_path, "r") as f:
-        test_data = json.load(f)
     
-    if isinstance(test_data, dict):
-        # If it's a dict, try to extract a list
-        test_data = list(test_data.values())[0] if test_data else []
+    if test_data_path.suffix == ".jsonl":
+        # Load JSONL format (one JSON object per line)
+        test_data = []
+        with open(test_data_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        item = json.loads(line)
+                        test_data.append(item)
+                    except json.JSONDecodeError:
+                        continue
+    else:
+        # Load JSON format
+        with open(test_data_path, "r", encoding="utf-8") as f:
+            test_data = json.load(f)
+        
+        if isinstance(test_data, dict):
+            # If it's a dict, try to extract a list
+            test_data = list(test_data.values())[0] if test_data else []
     
     if not isinstance(test_data, list):
         raise ValueError("Test data must be a list of items")

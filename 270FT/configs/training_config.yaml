@@ -2,15 +2,20 @@ data_dir: "data/raw"
 processed_dir: "data/processed"
 
 models:
-  - name: "meta-llama/Llama-3-8B-Instruct"
-    output_dir: "models/llama3_lora"
+  # LLaMA 3.1 requires Hugging Face authentication - commented out for now
+  # Uncomment after getting approval at: https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct
+  # - name: "meta-llama/Llama-3.1-8B-Instruct"
+  #   output_dir: "models/llama3.1_lora"
   - name: "Qwen/Qwen2.5-7B-Instruct"
     output_dir: "models/qwen3_lora"
 
 training:
   epochs: 3
   learning_rate: 2e-4
-  batch_size: 4
+  batch_size: 2  # Optimized for Colab T4 (16GB VRAM). Use 1 for 8GB local GPUs
+  gradient_accumulation_steps: 2  # Effective batch size = 2 * 2 = 4
+  max_length: 1024  # Can increase to 2048 on A100 GPUs
+  gradient_checkpointing: true  # Trade compute for memory
   lora_r: 8
   lora_alpha: 16
   lora_dropout: 0.05

@@ -21,6 +21,14 @@ from datasets import load_dataset, Dataset
 import wandb
 from evaluate import load as load_metric
 
+# Hugging Face authentication
+try:
+    from huggingface_hub import login, whoami
+    HF_HUB_AVAILABLE = True
+except ImportError:
+    HF_HUB_AVAILABLE = False
+    print("Warning: huggingface_hub not available. Install with: pip install huggingface_hub")
+
 
 def load_config(config_path: str) -> Dict[str, Any]:
     """Load configuration from YAML file."""
@@ -175,6 +183,61 @@ def create_compute_metrics_fn(tokenizer, metrics_config):
     return compute_metrics
 
 
+def check_hf_authentication(model_name: str) -> bool:
+    """
+    Check if Hugging Face authentication appears to be set up.
+    This is a best-effort check - the actual model loading will verify authentication.
+    
+    Returns:
+        True if authentication appears to be set up, False otherwise
+    """
+    # Check if model requires authentication (gated models)
+    gated_models = ["meta-llama", "llama"]
+    
+    if any(gated in model_name.lower() for gated in gated_models):
+        authenticated = False
+        
+        # Try to verify authentication
+        if HF_HUB_AVAILABLE:
+            try:
+                user_info = whoami()
+                if user_info:
+                    print(f"[OK] Hugging Face authenticated as: {user_info.get('name', 'user')}")
+                    authenticated = True
+            except Exception:
+                pass
+        
+        # Check for token in environment
+        if not authenticated and (os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_HUB_TOKEN")):
+            print("[OK] Hugging Face token found in environment")
+            authenticated = True
+        
+        # Check for token file
+        if not authenticated:
+            token_file = Path.home() / ".huggingface" / "token"
+            if token_file.exists():
+                print("[OK] Hugging Face token file found")
+                authenticated = True
+        
+        if not authenticated:
+            print("\n" + "="*60)
+            print("AUTHENTICATION WARNING")
+            print("="*60)
+            print(f"\nThe model '{model_name}' requires Hugging Face authentication.")
+            print("\nTo authenticate, run one of the following:")
+            print("  1. Run: huggingface-cli login")
+            print("  2. Or: python -c 'from huggingface_hub import login; login()'")
+            print("  3. Or set environment variable: export HF_TOKEN=your_token")
+            print("\nFor LLaMA models, you may also need to:")
+            print("  - Request access at: https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct")
+            print("  - Accept the model's terms of use")
+            print("\nAttempting to load model anyway...")
+            print("="*60 + "\n")
+            return False
+    
+    return True
+
+
 def train_model(
     model_name: str,
     output_dir: str,
@@ -192,6 +255,9 @@ def train_model(
     print(f"\n{'='*60}")
     print(f"Training model: {model_name}")
     print(f"{'='*60}\n")
+    
+    # Check authentication before attempting to load model (warn but don't fail)
+    check_hf_authentication(model_name)
     
     # Initialize W&B if enabled
     if config["logging"]["use_wandb"]:
@@ -214,14 +280,31 @@ def train_model(
     
     # Load model and tokenizer
     print(f"Loading model and tokenizer...")
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        quantization_config=bnb_config,
-        device_map="auto",
-        trust_remote_code=True,
-    )
-    
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            quantization_config=bnb_config,
+            device_map="auto",
+            trust_remote_code=True,
+        )
+        
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    except OSError as e:
+        if "not a valid model identifier" in str(e) or "not a local folder" in str(e):
+            print("\n" + "="*60)
+            print("MODEL LOADING ERROR")
+            print("="*60)
+            print(f"\nFailed to load model: {model_name}")
+            print(f"\nError: {e}")
+            print("\nPossible solutions:")
+            print("  1. Authenticate with Hugging Face:")
+            print("     huggingface-cli login")
+            print("  2. For gated models (like LLaMA), request access:")
+            print(f"     https://huggingface.co/{model_name}")
+            print("  3. Check your internet connection")
+            print("  4. Verify the model name is correct")
+            print("="*60 + "\n")
+        raise
     
     # Set pad token if not present
     if tokenizer.pad_token is None:
@@ -230,6 +313,11 @@ def train_model(
     
     # Prepare model for k-bit training
     model = prepare_model_for_kbit_training(model)
+    
+    # Enable gradient checkpointing if specified (saves memory)
+    if config["training"].get("gradient_checkpointing", False):
+        model.gradient_checkpointing_enable()
+        print("Gradient checkpointing enabled (memory optimization)")
     
     # Configure LoRA
     lora_config = LoraConfig(
@@ -249,29 +337,33 @@ def train_model(
     validation_dataset = None
     if validation_data_path:
         print(f"Loading validation data from {validation_data_path}...")
+        max_length = config["training"].get("max_length", 2048)
         validation_dataset = load_and_tokenize_dataset(
             validation_data_path,
             tokenizer,
-            max_length=2048,
+            max_length=max_length,
         )
         print(f"Validation dataset size: {len(validation_dataset)}")
     else:
         print("Warning: No validation data provided. Using test set for evaluation (not recommended).")
         if test_data_path:
+            max_length = config["training"].get("max_length", 2048)
             validation_dataset = load_and_tokenize_dataset(
                 test_data_path,
                 tokenizer,
-                max_length=2048,
+                max_length=max_length,
             )
     
-    # Training arguments
+    # Training arguments with memory optimizations
     training_args = TrainingArguments(
         output_dir=output_dir,
         num_train_epochs=config["training"]["epochs"],
         per_device_train_batch_size=config["training"]["batch_size"],
-        per_device_eval_batch_size=config["training"]["batch_size"],
+        per_device_eval_batch_size=min(config["training"]["batch_size"], 2),  # Smaller eval batch
+        gradient_accumulation_steps=config["training"].get("gradient_accumulation_steps", 1),
         learning_rate=config["training"]["learning_rate"],
         fp16=True,
+        gradient_checkpointing=config["training"].get("gradient_checkpointing", False),
         logging_steps=10,
         save_steps=500,
         eval_strategy="epoch",
@@ -279,6 +371,8 @@ def train_model(
         load_best_model_at_end=True,
         report_to="wandb" if config["logging"]["use_wandb"] else None,
         run_name=f"{model_name.split('/')[-1]}_qlora",
+        optim="paged_adamw_8bit",  # Memory-efficient optimizer
+        max_grad_norm=0.3,  # Gradient clipping for stability
     )
     
     # Data collator
@@ -316,10 +410,11 @@ def train_model(
     if test_data_path and validation_dataset:  # Only if we have separate validation
         print(f"\nEvaluating on test set (final assessment)...")
         test_data = load_test_data(test_data_path)
+        max_length = config["training"].get("max_length", 2048)
         test_dataset = load_and_tokenize_dataset(
             test_data_path,
             tokenizer,
-            max_length=2048,
+            max_length=max_length,
         )
         test_results = trainer.evaluate(eval_dataset=test_dataset)
         # Add test metrics with 'test_' prefix
@@ -425,7 +520,8 @@ def main():
             tokenizer.pad_token = tokenizer.eos_token
         
         # Tokenize dataset for this model
-        train_dataset = load_and_tokenize_dataset(train_data_path, tokenizer)
+        max_length = config["training"].get("max_length", 2048)
+        train_dataset = load_and_tokenize_dataset(train_data_path, tokenizer, max_length=max_length)
         
         # Train model
         results = train_model(

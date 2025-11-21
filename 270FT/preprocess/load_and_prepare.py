@@ -820,15 +820,40 @@ def main(
     Main preprocessing function.
     
     Args:
-        raw_data_dir: Path to raw data directory
-        processed_data_dir: Path to processed data output directory
+        raw_data_dir: Path to raw data directory (relative to project root or absolute)
+        processed_data_dir: Path to processed data output directory (relative to project root or absolute)
         validation_split: Fraction of exam files for validation (default: 0.15)
         test_split: Fraction of exam files for test (default: 0.15)
         use_temporal_split: Use date-based temporal splitting (default: True)
         use_unit_split: Use unit-based splitting - earlier units → train/val, later → test (default: False)
     """
+    # Resolve paths - convert to Path objects and resolve to absolute paths
     raw_dir = Path(raw_data_dir)
     processed_dir = Path(processed_data_dir)
+    
+    # If path is relative and doesn't exist, try relative to script's parent directory (project root)
+    if not raw_dir.is_absolute():
+        if not raw_dir.exists():
+            # Try relative to script location (project root)
+            script_dir = Path(__file__).parent.parent.parent  # Go up to project root
+            potential_path = script_dir / raw_data_dir
+            if potential_path.exists():
+                raw_dir = potential_path.resolve()
+            else:
+                # Try relative to current working directory
+                raw_dir = raw_dir.resolve()
+        else:
+            raw_dir = raw_dir.resolve()
+    else:
+        raw_dir = raw_dir.resolve()
+    
+    # For processed directory, resolve to absolute path
+    if not processed_dir.is_absolute():
+        script_dir = Path(__file__).parent.parent.parent  # Go up to project root
+        potential_path = script_dir / processed_data_dir
+        processed_dir = potential_path.resolve()
+    else:
+        processed_dir = processed_dir.resolve()
     
     print(f"Loading tokenizer: {TOKENIZER_NAME}")
     tokenizer = load_tokenizer()

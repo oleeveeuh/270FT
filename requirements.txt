@@ -10,4 +10,6 @@ evaluate
 pyyaml
 pdfplumber
 pypdf
+huggingface_hub
+psutil
 
