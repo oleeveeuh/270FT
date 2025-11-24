@@ -85,32 +85,34 @@ def load_and_tokenize_dataset(
         # Handle different column names
         prompt_col = "prompt" if "prompt" in examples else "question"
         response_col = "response" if "response" in examples else "solution"
-        
+
         prompts = examples[prompt_col] if isinstance(examples[prompt_col], list) else [examples[prompt_col]]
         responses = examples[response_col] if isinstance(examples[response_col], list) else [examples[response_col]]
-        
+
         texts = [format_prompt(p, r) for p, r in zip(prompts, responses)]
-        
-        # Tokenize
+
+        # Tokenize (don't pad here - let the data collator handle it dynamically)
         tokenized = tokenizer(
             texts,
             truncation=True,
             max_length=max_length,
-            padding="max_length",
-            return_tensors="pt",
+            padding=False,  # Dynamic padding during training is more efficient
         )
-        
+
         # For causal LM, labels are the same as input_ids
-        tokenized["labels"] = tokenized["input_ids"].clone()
-        
+        tokenized["labels"] = tokenized["input_ids"].copy()
+
         return tokenized
     
+    print(f"  Tokenizing {len(dataset)} examples...")
     tokenized_dataset = dataset.map(
         tokenize_function,
         batched=True,
         remove_columns=dataset.column_names,
+        desc="Tokenizing dataset",
     )
-    
+    print(f"  Tokenization complete. Dataset size: {len(tokenized_dataset)}")
+
     return tokenized_dataset
 
 
@@ -514,15 +516,23 @@ def main():
         model_name = model_config["name"]
         output_dir = project_root / model_config["output_dir"]
         output_dir.mkdir(parents=True, exist_ok=True)
-        
+
+        print(f"\n{'='*60}")
+        print(f"Preparing dataset for: {model_name}")
+        print(f"{'='*60}\n")
+
         # Load tokenizer to tokenize dataset
+        print(f"Loading tokenizer for {model_name}...")
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
-        
+            print(f"  Set pad_token to eos_token")
+
         # Tokenize dataset for this model
         max_length = config["training"].get("max_length", 2048)
+        print(f"Tokenizing training dataset (max_length={max_length})...")
         train_dataset = load_and_tokenize_dataset(train_data_path, tokenizer, max_length=max_length)
+        print(f"Training dataset ready: {len(train_dataset)} examples")
         
         # Train model
         results = train_model(
