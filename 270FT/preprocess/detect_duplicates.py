@@ -170,7 +170,7 @@ def print_duplicate_report(duplicates: Dict[str, List[Dict]]):
     
     # Train vs Validation
     if duplicates["train_vs_validation"]:
-        print(f"\n⚠️  Found {len(duplicates['train_vs_validation'])} duplicates between TRAIN and VALIDATION:")
+        print(f"\n[WARNING] Found {len(duplicates['train_vs_validation'])} duplicates between TRAIN and VALIDATION:")
         print("-" * 80)
         for i, dup in enumerate(duplicates["train_vs_validation"][:10], 1):  # Show first 10
             print(f"\n{i}. Similarity: {dup['similarity']:.3f}")
@@ -182,9 +182,9 @@ def print_duplicate_report(duplicates: Dict[str, List[Dict]]):
     
     # Train vs Test
     if duplicates["train_vs_test"]:
-        print(f"\n🚨 Found {len(duplicates['train_vs_test'])} duplicates between TRAIN and TEST:")
+        print(f"\n[CRITICAL] Found {len(duplicates['train_vs_test'])} duplicates between TRAIN and TEST:")
         print("-" * 80)
-        print("   ⚠️  CRITICAL: This causes data leakage! Remove duplicates from training set.")
+        print("   [WARNING] CRITICAL: This causes data leakage! Remove duplicates from training set.")
         for i, dup in enumerate(duplicates["train_vs_test"][:10], 1):
             print(f"\n{i}. Similarity: {dup['similarity']:.3f}")
             print(f"   Train: {dup['train_question']}")
@@ -195,7 +195,7 @@ def print_duplicate_report(duplicates: Dict[str, List[Dict]]):
     
     # Validation vs Test
     if duplicates["validation_vs_test"]:
-        print(f"\n⚠️  Found {len(duplicates['validation_vs_test'])} duplicates between VALIDATION and TEST:")
+        print(f"\n[WARNING] Found {len(duplicates['validation_vs_test'])} duplicates between VALIDATION and TEST:")
         print("-" * 80)
         for i, dup in enumerate(duplicates["validation_vs_test"][:10], 1):
             print(f"\n{i}. Similarity: {dup['similarity']:.3f}")
@@ -206,10 +206,10 @@ def print_duplicate_report(duplicates: Dict[str, List[Dict]]):
         total_duplicates += len(duplicates["validation_vs_test"])
     
     if total_duplicates == 0:
-        print("\n✅ No duplicates found! Your datasets are clean.")
+        print("\n[OK] No duplicates found! Your datasets are clean.")
     else:
-        print(f"\n📊 Total duplicates found: {total_duplicates}")
-        print("\n💡 Recommendation:")
+        print(f"\nTotal duplicates found: {total_duplicates}")
+        print("\nRecommendation:")
         print("   - Remove duplicate questions from TRAINING set")
         print("   - Keep them in VALIDATION/TEST sets for evaluation")
         print("   - This ensures evaluation is on 'unseen' problems")
@@ -277,7 +277,7 @@ def main():
         output_path = Path(args.output)
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(duplicates, f, indent=2, ensure_ascii=False)
-        print(f"\n✅ Duplicate report saved to: {output_path}")
+        print(f"\n[OK] Duplicate report saved to: {output_path}")
 
 
 if __name__ == "__main__":
