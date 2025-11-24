@@ -311,15 +311,15 @@ def evaluate_model(
 
 def main():
     """Main evaluation function."""
-    # Get project root
-    project_root = Path(__file__).parent.parent.parent
-    config_path = project_root / "270FT" / "configs" / "training_config.yaml"
-    
+    # Get project root (go up from evaluation/evaluate_models.py to project root)
+    project_root = Path(__file__).parent.parent
+    config_path = project_root / "configs" / "training_config.yaml"
+
     # Load config
     config = load_config(str(config_path))
-    
+
     # Setup paths
-    processed_dir = project_root / "270FT" / config["processed_dir"]
+    processed_dir = project_root / config["processed_dir"]
     
     # Try to find test data (JSONL or JSON)
     test_data_path = None
@@ -375,7 +375,7 @@ def main():
     
     for model_config in config["models"]:
         base_model_name = model_config["name"]
-        adapter_path = project_root / "270FT" / model_config["output_dir"]
+        adapter_path = project_root / model_config["output_dir"]
         
         if not adapter_path.exists():
             print(f"Warning: Adapter path {adapter_path} does not exist. Skipping {base_model_name}")

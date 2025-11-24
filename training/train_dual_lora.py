@@ -437,16 +437,16 @@ def train_model(
 
 def main():
     """Main training function."""
-    # Get project root
-    project_root = Path(__file__).parent.parent.parent
-    config_path = project_root / "270FT" / "configs" / "training_config.yaml"
-    
+    # Get project root (go up from training/train_dual_lora.py to project root)
+    project_root = Path(__file__).parent.parent
+    config_path = project_root / "configs" / "training_config.yaml"
+
     # Load config
     config = load_config(str(config_path))
-    
+
     # Setup paths
-    data_dir = project_root / "270FT" / config["data_dir"]
-    processed_dir = project_root / "270FT" / config["processed_dir"]
+    data_dir = project_root / config["data_dir"]
+    processed_dir = project_root / config["processed_dir"]
     
     # Find training data (look for train.jsonl, train.json, or train.csv)
     train_data_path = None
@@ -512,7 +512,7 @@ def main():
     
     for model_config in config["models"]:
         model_name = model_config["name"]
-        output_dir = project_root / "270FT" / model_config["output_dir"]
+        output_dir = project_root / model_config["output_dir"]
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Load tokenizer to tokenize dataset

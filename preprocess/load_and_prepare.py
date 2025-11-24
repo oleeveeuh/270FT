@@ -834,8 +834,8 @@ def main(
     # If path is relative and doesn't exist, try relative to script's parent directory (project root)
     if not raw_dir.is_absolute():
         if not raw_dir.exists():
-            # Try relative to script location (project root)
-            script_dir = Path(__file__).parent.parent.parent  # Go up to project root
+            # Try relative to script location (go up from preprocess/load_and_prepare.py to project root)
+            script_dir = Path(__file__).parent.parent  # Go up to project root
             potential_path = script_dir / raw_data_dir
             if potential_path.exists():
                 raw_dir = potential_path.resolve()
@@ -846,10 +846,10 @@ def main(
             raw_dir = raw_dir.resolve()
     else:
         raw_dir = raw_dir.resolve()
-    
+
     # For processed directory, resolve to absolute path
     if not processed_dir.is_absolute():
-        script_dir = Path(__file__).parent.parent.parent  # Go up to project root
+        script_dir = Path(__file__).parent.parent  # Go up to project root
         potential_path = script_dir / processed_data_dir
         processed_dir = potential_path.resolve()
     else:
