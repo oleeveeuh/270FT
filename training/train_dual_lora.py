@@ -406,21 +406,22 @@ def train_model(
         print("Warning: No validation set available for evaluation")
         eval_results = {}
     
-    # Evaluate on test set (separate, for final assessment)
+    # Skip test evaluation during training - test set will be evaluated later with human-in-the-loop
+    # Test data may not have solutions, so we only use it for inference after training
     if test_data_path and validation_dataset:  # Only if we have separate validation
-        print(f"\nEvaluating on test set (final assessment)...")
-        test_data = load_test_data(test_data_path)
-        max_length = config["training"].get("max_length", 2048)
-        test_dataset = load_and_tokenize_dataset(
-            test_data_path,
-            tokenizer,
-            max_length=max_length,
-        )
-        test_results = trainer.evaluate(eval_dataset=test_dataset)
-        # Add test metrics with 'test_' prefix
-        for key, value in test_results.items():
-            eval_results[f"test_{key}"] = value
-        print(f"Test set results: {test_results}")
+        print(f"\nSkipping test set evaluation during training (test data reserved for human-in-the-loop evaluation)")
+        # test_data = load_test_data(test_data_path)
+        # max_length = config["training"].get("max_length", 2048)
+        # test_dataset = load_and_tokenize_dataset(
+        #     test_data_path,
+        #     tokenizer,
+        #     max_length=max_length,
+        # )
+        # test_results = trainer.evaluate(eval_dataset=test_dataset)
+        # # Add test metrics with 'test_' prefix
+        # for key, value in test_results.items():
+        #     eval_results[f"test_{key}"] = value
+        # print(f"Test set results: {test_results}")
     
     # Save adapter
     print(f"Saving adapter to {output_dir}...")
