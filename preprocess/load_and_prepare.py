@@ -115,78 +115,112 @@ def extract_text_from_pdf(file_path: Path) -> str:
 def parse_pdf_file(file_path: Path) -> List[Dict[str, str]]:
     """
     Parse PDF file and extract Q&A pairs.
-    
+
     Handles different PDF types:
     - Textbooks: Looks for chapter sections, examples, exercises
     - Lecture slides: Extracts slide content, examples, problems
     - Homework: Looks for problem/solution patterns
-    
+
     Returns:
         List of Q&A pairs extracted from PDF
     """
     print(f"    Extracting text from PDF: {file_path.name}")
     text = extract_text_from_pdf(file_path)
-    
+
     if not text:
         return []
-    
+
+    # Detect PDF type from filename and content
+    filename_lower = file_path.name.lower()
+    is_homework = any(kw in filename_lower for kw in ['homework', 'assignment', 'hw', 'problem_set'])
+    is_lecture = any(kw in filename_lower for kw in ['lecture', 'notes', 'slides'])
+
     pairs = []
+
+    # Strategy 0: For homework/assignment PDFs, extract Problem/Solution pairs
+    if is_homework or 'solution' in filename_lower:
+        print(f"    Detected homework/solution PDF")
+        # Pattern: "Problem X. [text] Solution. [text]" until next Problem
+        problem_solution_pattern = r'Problem\s+(\d+)\.\s*(.+?)\s*Solution\.\s*(.+?)(?=Problem\s+\d+\.|$)'
+
+        matches = list(re.finditer(problem_solution_pattern, text, re.DOTALL | re.IGNORECASE))
+
+        for match in matches:
+            prob_num = match.group(1)
+            prob_text = match.group(2).strip()
+            sol_text = match.group(3).strip()
+
+            # Skip if too short or too long (likely extraction error)
+            if len(prob_text) < 30 or len(sol_text) < 30:
+                continue
+            if len(prob_text) > 15000 or len(sol_text) > 15000:
+                continue
+
+            # Clean up the text
+            prob_text = clean_text(prob_text)
+            sol_text = clean_text(sol_text)
+
+            if prob_text and sol_text:
+                pairs.append({
+                    "question": f"Problem {prob_num}: {prob_text}",
+                    "solution": sol_text
+                })
+
+        if pairs:
+            print(f"    Extracted {len(pairs)} problem/solution pairs from homework")
+            return pairs
+        else:
+            print(f"    Note: Could not extract structured Q&A from homework PDF")
     
+    # For lecture slides without clear Q&A structure, skip them
+    # They typically don't have extractable training data
+    if is_lecture and len(text) > 100000:
+        print(f"    Skipping large lecture slide deck (no clear Q&A structure)")
+        return []
+
     # Strategy 1: Look for explicit Q: / A: or Question: / Answer: patterns
     qa_patterns = [
         r'(?:Q:|Question:)\s*(.+?)(?=\n(?:A:|Answer:))(?:\n(?:A:|Answer:)\s*(.+?))(?=\n(?:Q:|Question:)|$)',
         r'(?:Problem|Exercise)\s*\d+[.:]\s*(.+?)(?=\n(?:Solution|Answer):)(?:\n(?:Solution|Answer):\s*(.+?))(?=\n(?:Problem|Exercise)|$)',
         r'Example\s*\d+[.:]\s*(.+?)(?=\n(?:Solution|Proof):)(?:\n(?:Solution|Proof):\s*(.+?))(?=\n(?:Example|Problem)|$)',
     ]
-    
+
     for pattern in qa_patterns:
         matches = re.finditer(pattern, text, re.DOTALL | re.IGNORECASE)
         for match in matches:
             question = match.group(1).strip() if match.lastindex >= 1 else ""
             answer = match.group(2).strip() if match.lastindex >= 2 else ""
-            
+
+            # Skip oversized matches (likely extraction errors)
+            if len(question) > 10000 or len(answer) > 10000:
+                continue
+
             if question and answer and len(question) > 10 and len(answer) > 10:
                 pairs.append({
                     "question": clean_text(question),
                     "solution": clean_text(answer)
                 })
     
-    # Strategy 2: For lecture slides, extract slide content as context
-    # Look for slide separators or numbered sections
-    if not pairs:
-        # Try to identify slide-based content
-        slides = re.split(r'\n\s*\n\s*\n|\n\d+\s*\n', text)  # Split by multiple newlines or slide numbers
-        
-        for slide in slides:
-            slide = slide.strip()
-            if len(slide) < 50:  # Skip very short slides (likely headers)
+    # Strategy 2: For lecture slides with explicit Problem/Solution structure
+    # Only extract if we find clear delimiters
+    if not pairs and is_lecture:
+        # Look for explicit Problem/Solution pairs in slides
+        problem_solution_pattern = r'(?:Problem|Example|Exercise)[:\s]+(.+?)\s*(?:Solution|Answer|Proof)[:\s]+(.+?)(?=(?:Problem|Example|Exercise|$))'
+
+        matches = re.finditer(problem_solution_pattern, text, re.DOTALL | re.IGNORECASE)
+        for match in matches:
+            problem_text = match.group(1).strip()
+            solution_text = match.group(2).strip()
+
+            # Strict size limits to avoid document concatenation
+            if len(problem_text) > 5000 or len(solution_text) > 5000:
                 continue
-            
-            # Look for problem statements followed by solutions
-            # Common patterns in slides: "Problem:", "Example:", "Exercise:"
-            problem_match = re.search(
-                r'(?:Problem|Example|Exercise|Question)[:\s]+(.+?)(?=\n(?:Solution|Answer|Proof)|$)',
-                slide,
-                re.DOTALL | re.IGNORECASE
-            )
-            
-            if problem_match:
-                problem_text = problem_match.group(1).strip()
-                
-                # Look for solution in the same slide or next
-                solution_match = re.search(
-                    r'(?:Solution|Answer|Proof)[:\s]+(.+?)(?=\n(?:Problem|Example|Exercise|Question)|$)',
-                    slide,
-                    re.DOTALL | re.IGNORECASE
-                )
-                
-                if solution_match:
-                    solution_text = solution_match.group(1).strip()
-                    if len(problem_text) > 10 and len(solution_text) > 10:
-                        pairs.append({
-                            "question": clean_text(problem_text),
-                            "solution": clean_text(solution_text)
-                        })
+
+            if len(problem_text) > 50 and len(solution_text) > 50:
+                pairs.append({
+                    "question": clean_text(problem_text),
+                    "solution": clean_text(solution_text)
+                })
     
     # Strategy 3: For textbooks, extract theorem/proof pairs
     if not pairs:
@@ -196,62 +230,19 @@ def parse_pdf_file(file_path: Path) -> List[Dict[str, str]]:
         for match in matches:
             theorem = match.group(1).strip() if match.lastindex >= 1 else ""
             proof = match.group(2).strip() if match.lastindex >= 2 else ""
-            
+
+            # Strict size limits
+            if len(theorem) > 2000 or len(proof) > 5000:
+                continue
+
             if theorem and proof and len(theorem) > 10 and len(proof) > 20:
                 pairs.append({
                     "question": f"Prove: {clean_text(theorem)}",
                     "solution": clean_text(proof)
                 })
-    
-    # Strategy 4: If no structured patterns found, chunk by sections
-    # This is useful for textbooks where content is more narrative
-    if not pairs:
-        # Split by common section markers
-        sections = re.split(r'\n\s*(?:Chapter|Section|§)\s*\d+', text, flags=re.IGNORECASE)
-        
-        for section in sections:
-            section = section.strip()
-            if len(section) < 100:  # Skip very short sections
-                continue
-            
-            # Look for any question-like patterns
-            # This is a fallback for less structured content
-            question_indicators = [
-                r'What\s+(?:is|are|does|do|can|will)',
-                r'How\s+(?:do|does|can|will)',
-                r'Prove\s+that',
-                r'Show\s+that',
-                r'Explain\s+(?:why|how|what)',
-                r'Find\s+(?:the|a)',
-                r'Calculate\s+',
-                r'Determine\s+',
-            ]
-            
-            for indicator in question_indicators:
-                matches = re.finditer(
-                    f'({indicator}.+?)(?=\n\n|\n(?:Solution|Answer)|$)',
-                    section,
-                    re.DOTALL | re.IGNORECASE
-                )
-                for match in matches:
-                    question_text = match.group(1).strip()
-                    if len(question_text) > 20:
-                        # Try to find corresponding answer nearby
-                        remaining_text = section[section.find(question_text) + len(question_text):]
-                        answer_match = re.search(
-                            r'(?:Solution|Answer|Explanation)[:\s]*(.+?)(?=\n\n|$)',
-                            remaining_text[:500],  # Look in next 500 chars
-                            re.DOTALL | re.IGNORECASE
-                        )
-                        
-                        if answer_match:
-                            answer_text = answer_match.group(1).strip()
-                            if len(answer_text) > 20:
-                                pairs.append({
-                                    "question": clean_text(question_text),
-                                    "solution": clean_text(answer_text)
-                                })
-                                break
+
+    # Skip Strategy 4 (unstructured extraction) - it causes too many false positives
+    # and extracts content that isn't actually Q&A pairs
     
     print(f"    Extracted {len(pairs)} Q&A pairs from PDF")
     return pairs
@@ -390,35 +381,46 @@ def chunk_text(text: str, tokenizer: AutoTokenizer, max_tokens: int = MAX_TOKENS
     return chunks
 
 
-def process_qa_pair(qa_pair: Dict[str, str], tokenizer: AutoTokenizer) -> List[Dict[str, str]]:
+def process_qa_pair(qa_pair: Dict[str, str], tokenizer: AutoTokenizer, max_chars: int = 20000) -> List[Dict[str, str]]:
     """
-    Process a Q&A pair, chunking if necessary.
-    
-    Returns a list of processed pairs (may be multiple if chunked).
+    Process a Q&A pair, with validation and length limits.
+
+    Returns a list with a single processed pair if valid, empty list otherwise.
     """
     question = clean_text(qa_pair.get("question", ""))
     solution = clean_text(qa_pair.get("solution", ""))
-    
+
+    # Require both question and solution
     if not question or not solution:
         return []
-    
-    # Combine question and solution for token counting
+
+    # Safety check: reject pairs that are unreasonably long (likely entire documents)
+    if len(question) > max_chars or len(solution) > max_chars:
+        print(f"      Warning: Skipping oversized Q&A pair (question: {len(question)} chars, solution: {len(solution)} chars)")
+        return []
+
+    # Minimum length check: require substantive content
+    if len(question) < 20 or len(solution) < 20:
+        return []
+
+    # Check token count
     combined = f"Question: {question}\nSolution: {solution}"
-    
-    # Chunk if necessary
-    chunks = chunk_text(combined, tokenizer, MAX_TOKENS)
-    
-    processed_pairs = []
-    for chunk in chunks:
-        # Try to extract question and solution from chunk
-        # If chunking split them, we'll keep them together
-        processed_pairs.append({
-            "text": chunk,
-            "question": question,
-            "solution": solution
-        })
-    
-    return processed_pairs
+    tokens = tokenizer.encode(combined, add_special_tokens=False)
+
+    if len(tokens) > MAX_TOKENS:
+        # If too long, truncate rather than chunk (avoids duplication)
+        print(f"      Warning: Q&A pair too long ({len(tokens)} tokens), truncating to {MAX_TOKENS}")
+        # Truncate by taking a reasonable portion of each
+        max_q_chars = max_chars // 2
+        max_s_chars = max_chars // 2
+        question = question[:max_q_chars]
+        solution = solution[:max_s_chars]
+
+    return [{
+        "text": combined,
+        "question": question,
+        "solution": solution
+    }]
 
 
 def extract_unit_from_filename(filename: str) -> Optional[int]:
