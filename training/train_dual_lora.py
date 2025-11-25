@@ -8,6 +8,7 @@ import yaml
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 import torch
+import numpy as np
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -148,7 +149,14 @@ def create_compute_metrics_fn(tokenizer, metrics_config):
     def compute_metrics(eval_pred):
         """Compute evaluation metrics."""
         predictions, labels = eval_pred
-        
+
+        # Convert logits to token IDs (take argmax)
+        if len(predictions.shape) == 3:  # (batch_size, seq_len, vocab_size)
+            predictions = predictions.argmax(axis=-1)
+
+        # Replace -100 in labels (used for padding) with pad_token_id
+        labels = [[label if label != -100 else tokenizer.pad_token_id for label in seq] for seq in labels]
+
         # Decode predictions and labels
         decoded_preds = tokenizer.batch_decode(predictions, skip_special_tokens=True)
         decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
