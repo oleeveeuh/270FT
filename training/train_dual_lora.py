@@ -15,6 +15,7 @@ from transformers import (
     Trainer,
     BitsAndBytesConfig,
     DataCollatorForLanguageModeling,
+    default_data_collator,
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from datasets import load_dataset, Dataset
@@ -379,11 +380,13 @@ def train_model(
         max_grad_norm=0.3,  # Gradient clipping for stability
     )
     
-    # Data collator with padding enabled for variable-length sequences
-    data_collator = DataCollatorForLanguageModeling(
+    # Custom data collator that handles padding for causal LM
+    from transformers import DataCollatorForSeq2Seq
+    data_collator = DataCollatorForSeq2Seq(
         tokenizer=tokenizer,
-        mlm=False,
-        pad_to_multiple_of=8,  # Pad to multiple of 8 for efficiency
+        model=model,
+        padding=True,
+        pad_to_multiple_of=8,
     )
     
     # Create compute_metrics function
