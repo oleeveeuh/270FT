@@ -369,7 +369,7 @@ def train_model(
         fp16=True,
         gradient_checkpointing=config["training"].get("gradient_checkpointing", False),
         logging_steps=10,
-        save_steps=500,
+        save_strategy="epoch",  # Match eval_strategy for load_best_model_at_end
         eval_strategy="epoch",
         save_total_limit=3,
         load_best_model_at_end=True,
