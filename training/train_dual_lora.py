@@ -365,7 +365,7 @@ def train_model(
         per_device_train_batch_size=config["training"]["batch_size"],
         per_device_eval_batch_size=min(config["training"]["batch_size"], 2),  # Smaller eval batch
         gradient_accumulation_steps=config["training"].get("gradient_accumulation_steps", 1),
-        learning_rate=config["training"]["learning_rate"],
+        learning_rate=float(config["training"]["learning_rate"]),  # Ensure float type
         fp16=True,
         gradient_checkpointing=config["training"].get("gradient_checkpointing", False),
         logging_steps=10,

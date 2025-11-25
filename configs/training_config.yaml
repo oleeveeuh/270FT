@@ -11,7 +11,7 @@ models:
 
 training:
   epochs: 3
-  learning_rate: 2e-4
+  learning_rate: 0.0002  # 2e-4 in decimal notation
   batch_size: 2  # Optimized for Colab T4 (16GB VRAM). Use 1 for 8GB local GPUs
   gradient_accumulation_steps: 2  # Effective batch size = 2 * 2 = 4
   max_length: 1024  # Can increase to 2048 on A100 GPUs
