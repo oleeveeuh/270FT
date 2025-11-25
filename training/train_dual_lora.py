@@ -379,10 +379,11 @@ def train_model(
         max_grad_norm=0.3,  # Gradient clipping for stability
     )
     
-    # Data collator
+    # Data collator with padding enabled for variable-length sequences
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
         mlm=False,
+        pad_to_multiple_of=8,  # Pad to multiple of 8 for efficiency
     )
     
     # Create compute_metrics function
