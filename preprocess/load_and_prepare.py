@@ -44,20 +44,27 @@ def load_tokenizer() -> AutoTokenizer:
     return AutoTokenizer.from_pretrained(TOKENIZER_NAME)
 
 
-def parse_json_file(file_path: Path) -> List[Dict[str, str]]:
+def parse_json_file(file_path: Path, allow_question_only: bool = False) -> List[Dict[str, str]]:
     """
     Parse JSON file with Question/Solution blocks.
-    
+
     Expected format:
     {
         "Question": "...",
         "Solution": "..."
     }
     or a list of such objects.
+
+    Args:
+        file_path: Path to JSON file
+        allow_question_only: If True, allow questions without solutions (for test sets)
+
+    Returns:
+        List of Q&A pairs (or question-only dicts if allow_question_only=True)
     """
     with open(file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
-    
+
     pairs = []
     if isinstance(data, list):
         for item in data:
@@ -66,12 +73,18 @@ def parse_json_file(file_path: Path) -> List[Dict[str, str]]:
                 solution = item.get("Solution", item.get("solution", ""))
                 if question and solution:
                     pairs.append({"question": question, "solution": solution})
+                elif question and allow_question_only:
+                    # For test sets: questions only
+                    pairs.append({"question": question})
     elif isinstance(data, dict):
         question = data.get("Question", data.get("question", ""))
         solution = data.get("Solution", data.get("solution", ""))
         if question and solution:
             pairs.append({"question": question, "solution": solution})
-    
+        elif question and allow_question_only:
+            # For test sets: questions only
+            pairs.append({"question": question})
+
     return pairs
 
 
@@ -222,7 +235,96 @@ def parse_pdf_file(file_path: Path) -> List[Dict[str, str]]:
                     "solution": clean_text(solution_text)
                 })
     
-    # Strategy 3: For textbooks, extract theorem/proof pairs
+    # Strategy 3a: For textbooks, extract Solved Exercise pairs
+    # Pattern: "Solved Exercise X" followed by problem text and "Solution" section
+    if not pairs:
+        # Match "Solved Exercise N" ... "Solution" ... (next "Solved Exercise" or end)
+        solved_ex_pattern = r'Solved Exercise\s+(\d+)\s+(.+?)\s+Solution\s+(.+?)(?=Solved Exercise|\n\n\n|$)'
+        matches = re.finditer(solved_ex_pattern, text, re.DOTALL | re.IGNORECASE)
+
+        for match in matches:
+            ex_num = match.group(1).strip()
+            problem = match.group(2).strip()
+            solution = match.group(3).strip()
+
+            # Validate lengths
+            if len(problem) < 50 or len(solution) < 50:
+                continue
+            if len(problem) > 8000 or len(solution) > 12000:
+                continue
+
+            # Clean the text
+            problem = clean_text(problem)
+            solution = clean_text(solution)
+
+            # For textbook content, if it starts lowercase, try to fix by capitalizing
+            # (this happens due to PDF column extraction issues)
+            if problem and problem[0].islower():
+                # Try to find a sentence boundary and start from there
+                sentences = re.split(r'[.!?]\s+', problem)
+                if len(sentences) > 1:
+                    # Start from the second sentence if first is fragment
+                    problem = '. '.join(sentences[1:])
+                else:
+                    # Just capitalize it
+                    problem = problem[0].upper() + problem[1:]
+
+            # Only add if solution is substantive (RELAXED: ≥50 chars)
+            if len(solution) >= 50 and len(problem) >= 30:
+                pairs.append({
+                    "question": problem,
+                    "solution": solution
+                })
+
+        if pairs:
+            print(f"    Extracted {len(pairs)} solved exercises from textbook")
+
+    # Strategy 3a2: For textbooks, also extract unsolved "Exercise" sections that have solutions nearby
+    # ACCUMULATE with other strategies
+    initial_count = len(pairs)
+    exercise_pattern = r'Exercise\s+(\d+(?:\.\d+)?)[:\s]+(.+?)(?:\n\n|$)'
+    matches = re.finditer(exercise_pattern, text, re.DOTALL | re.IGNORECASE)
+
+    for match in matches:
+        ex_num = match.group(1).strip()
+        problem = match.group(2).strip()
+
+        # Look for solution in the next 2000 characters
+        solution_start = match.end()
+        solution_search = text[solution_start:solution_start + 2000]
+
+        # Try to find "Solution" or answer patterns
+        solution_match = re.search(r'(?:Solution|Answer)[:\s]+(.+?)(?:\n\nExercise|\n\n\n|$)', solution_search, re.DOTALL | re.IGNORECASE)
+
+        if solution_match:
+            solution = solution_match.group(1).strip()
+
+            # Validate lengths
+            if len(problem) < 30 or len(solution) < 30:
+                continue
+            if len(problem) > 8000 or len(solution) > 12000:
+                continue
+
+            # Clean and capitalize if needed
+            problem = clean_text(problem)
+            solution = clean_text(solution)
+
+            if problem and problem[0].islower():
+                sentences = re.split(r'[.!?]\s+', problem)
+                if len(sentences) > 1:
+                    problem = '. '.join(sentences[1:])
+                else:
+                    problem = problem[0].upper() + problem[1:]
+
+            pairs.append({
+                "question": problem,
+                "solution": solution
+            })
+
+    if len(pairs) > initial_count:
+        print(f"    Extracted {len(pairs) - initial_count} additional exercises from textbook")
+
+    # Strategy 3b: For textbooks, extract theorem/proof pairs
     if not pairs:
         # Look for theorem statements followed by proofs
         theorem_pattern = r'(?:Theorem|Proposition|Lemma|Corollary)\s*\d*[.:]\s*(.+?)(?=\n(?:Proof|Demonstration):)(?:\n(?:Proof|Demonstration):\s*(.+?))(?=\n(?:Theorem|Proposition|Lemma|Corollary)|$)'
@@ -241,9 +343,314 @@ def parse_pdf_file(file_path: Path) -> List[Dict[str, str]]:
                     "solution": clean_text(proof)
                 })
 
-    # Skip Strategy 4 (unstructured extraction) - it causes too many false positives
-    # and extracts content that isn't actually Q&A pairs
-    
+    # Strategy 4: Extract conceptual content and frame as questions
+    # For lecture slides with definitions, algorithms, concepts, etc.
+    # ACCUMULATE with other strategies (removed "if not pairs")
+    if is_lecture:
+        initial_count = len(pairs)
+        print(f"    Attempting conceptual content extraction...")
+
+        # Pattern 1a: Explicit Definition patterns
+        # "Definition: X is..." → Q: "What is X?" A: "X is..."
+        definition_pattern = r'Definition[:\s]+(?:A\s+)?([A-Z][a-zA-Z\s]+?)\s+is\s+(.+?)(?=\n\n|\nDefinition|\nTheorem|\nAlgorithm|\nExample|$)'
+        matches = re.finditer(definition_pattern, text, re.DOTALL)
+        for match in matches:
+            term = match.group(1).strip()
+            definition = match.group(2).strip()
+
+            # Validate length
+            if len(definition) < 30 or len(definition) > 3000:
+                continue
+
+            question = f"What is {term}?"
+            solution = f"{term} is {definition}"
+
+            pairs.append({
+                "question": clean_text(question),
+                "solution": clean_text(solution)
+            })
+
+        # Pattern 1b: Inline definitions (A X is...)
+        # Look for sentences that define terms inline
+        inline_def_pattern = r'(?:^|\n)(?:A|An)\s+([a-z][a-z\s-]+?)\s+is\s+(?:a|an)\s+(.+?)(?:\.|;|\n)'
+        matches = re.finditer(inline_def_pattern, text, re.IGNORECASE)
+        for match in matches:
+            term = match.group(1).strip()
+            definition = match.group(2).strip()
+
+            # Skip very short or very long
+            if len(definition) < 20 or len(definition) > 500:
+                continue
+
+            # Skip if term is too long (likely not a definition)
+            if len(term) > 50:
+                continue
+
+            question = f"What is a {term}?"
+            solution = f"A {term} is {definition}."
+
+            pairs.append({
+                "question": clean_text(question),
+                "solution": clean_text(solution)
+            })
+
+        # Pattern 1c: "X is defined as..." or "We define X as..."
+        defined_as_pattern = r'(?:^|\n)(?:We define |The )?([A-Z][a-zA-Z\s-]+?)\s+is defined as\s+(.+?)(?:\.|;|\n\n)'
+        matches = re.finditer(defined_as_pattern, text, re.DOTALL)
+        for match in matches:
+            term = match.group(1).strip()
+            definition = match.group(2).strip()
+
+            # Validate length
+            if len(definition) < 20 or len(definition) > 800:
+                continue
+
+            if len(term) > 60:
+                continue
+
+            question = f"What is {term}?"
+            solution = f"{term} is defined as {definition}."
+
+            pairs.append({
+                "question": clean_text(question),
+                "solution": clean_text(solution)
+            })
+
+        # Pattern 2: Algorithm descriptions
+        # "Algorithm: [name]. [description]" → Q: "Explain [name]" A: "[description]"
+        algorithm_pattern = r'Algorithm[:\s]+([A-Z][a-zA-Z\s\-]+?)[\.:]\s*(.+?)(?=\n\n|\nAlgorithm|\nDefinition|\nTheorem|\nExample|$)'
+        matches = re.finditer(algorithm_pattern, text, re.DOTALL)
+        for match in matches:
+            name = match.group(1).strip()
+            description = match.group(2).strip()
+
+            # Validate length
+            if len(description) < 50 or len(description) > 5000:
+                continue
+
+            question = f"Explain the {name} algorithm."
+            solution = clean_text(description)
+
+            pairs.append({
+                "question": question,
+                "solution": solution
+            })
+
+        # Pattern 3: Concept explanations
+        # "Concept: [name]. [explanation]" → Q: "Explain [name]" A: "[explanation]"
+        concept_pattern = r'Concept[:\s]+([A-Z][a-zA-Z\s\-]+?)[\.:]\s*(.+?)(?=\n\n|\nConcept|\nDefinition|\nTheorem|\nAlgorithm|$)'
+        matches = re.finditer(concept_pattern, text, re.DOTALL)
+        for match in matches:
+            name = match.group(1).strip()
+            explanation = match.group(2).strip()
+
+            # Validate length
+            if len(explanation) < 50 or len(explanation) > 5000:
+                continue
+
+            question = f"Explain {name}."
+            solution = clean_text(explanation)
+
+            pairs.append({
+                "question": question,
+                "solution": solution
+            })
+
+        # Pattern 4: Key Points / Important Notes
+        # "Key Point: [text]" → Q: "What is an important point about [topic]?" A: "[text]"
+        # Extract topic from surrounding context (previous heading)
+        key_point_pattern = r'(?:Key Point|Important Note|Note)[:\s]+(.+?)(?=\n\n|\nKey Point|\nImportant Note|\nNote|$)'
+        matches = re.finditer(key_point_pattern, text, re.DOTALL)
+        for match in matches:
+            point = match.group(1).strip()
+
+            # Validate length
+            if len(point) < 30 or len(point) > 2000:
+                continue
+
+            # Generic question
+            question = "Explain this key concept."
+            solution = clean_text(point)
+
+            pairs.append({
+                "question": question,
+                "solution": solution
+            })
+
+        if len(pairs) > initial_count:
+            print(f"    Extracted {len(pairs) - initial_count} conceptual Q&A pairs from lecture slides")
+
+    # Strategy 5: Extract examples with solutions (for any PDF type)
+    # Look for "Example:" followed by solution/answer
+    # REMOVED "if not pairs" to accumulate from all strategies
+    example_pattern = r'Example[:\s]+\d*[:\s]*(.+?)(?:Solution|Answer|Proof)[:\s]+(.+?)(?=\n\nExample|\n\n\n|$)'
+    initial_count = len(pairs)
+    matches = re.finditer(example_pattern, text, re.DOTALL | re.IGNORECASE)
+
+    for match in matches:
+        example_text = match.group(1).strip()
+        solution_text = match.group(2).strip()
+
+        if len(example_text) < 30 or len(solution_text) < 50:
+            continue
+        if len(example_text) > 5000 or len(solution_text) > 8000:
+            continue
+
+        pairs.append({
+            "question": clean_text(example_text),
+            "solution": clean_text(solution_text)
+        })
+
+    if len(pairs) > initial_count:
+        print(f"    Extracted {len(pairs) - initial_count} examples from PDF")
+
+    # Strategy 6: Extract definitions (broader pattern, any PDF)
+    # Capture any "X is/are defined as Y" or "We define X as Y" patterns
+    # ACCUMULATE with other strategies
+    initial_count = len(pairs)
+    broad_def_patterns = [
+        r'([A-Z][a-zA-Z\s]+?)\s+(?:is|are)\s+defined\s+(?:as|to be)\s+(.+?)(?:\.|;|\n\n)',
+        r'(?:We|Let us)\s+define\s+([a-zA-Z\s]+?)\s+as\s+(.+?)(?:\.|;|\n\n)',
+        r'Definition[:\s]+([A-Z][a-zA-Z\s]+?)[:\s]+(.+?)(?:\n\n|$)',
+    ]
+
+    for pattern in broad_def_patterns:
+        matches = re.finditer(pattern, text, re.DOTALL)
+        for match in matches:
+            term = match.group(1).strip()
+            definition = match.group(2).strip()
+
+            if len(term) < 3 or len(term) > 100:
+                continue
+            if len(definition) < 30 or len(definition) > 1000:
+                continue
+
+            question = f"What is {term}?"
+            solution = clean_text(definition)
+
+            pairs.append({
+                "question": question,
+                "solution": solution
+            })
+
+    if len(pairs) > initial_count:
+        print(f"    Extracted {len(pairs) - initial_count} definitions from PDF")
+
+    # Strategy 7: Extract theorem/lemma/corollary statements (even without proofs)
+    # These can be used as "State the theorem" type questions
+    # ACCUMULATE with other strategies
+    initial_count = len(pairs)
+    theorem_only_pattern = r'(Theorem|Lemma|Corollary|Proposition)\s*\d*[.:]\s*(.+?)(?=\n\n|Proof|$)'
+    matches = re.finditer(theorem_only_pattern, text, re.DOTALL | re.IGNORECASE)
+
+    for match in matches:
+        thm_type = match.group(1).strip()
+        statement = match.group(2).strip()
+
+        # Skip if too short (likely continuation of previous text)
+        if len(statement) < 50 or len(statement) > 3000:
+            continue
+
+        # Clean the statement
+        statement = clean_text(statement)
+
+        # If statement is actually long enough to contain explanation
+        if len(statement) > 150:
+            question = f"State the {thm_type}."
+            solution = statement
+
+            pairs.append({
+                "question": question,
+                "solution": solution
+            })
+
+    if len(pairs) > initial_count:
+        print(f"    Extracted {len(pairs) - initial_count} theorems/lemmas from PDF")
+
+    # Strategy 8: Extract algorithm pseudocode blocks (from any PDF)
+    # Look for "Algorithm:", pseudocode blocks, or "Input:/Output:" patterns
+    # ACCUMULATE with other strategies
+    initial_count = len(pairs)
+
+    # Pattern 8a: Algorithm with Input/Output/Steps
+    algorithm_blocks = re.finditer(
+        r'(?:Algorithm|Procedure)[:\s]+([A-Z][a-zA-Z\s\-()]+?)[:\s]*\n'
+        r'(?:.*?(?:Input|Output|Steps|begin|for|while|if|return).*?)+'
+        r'(?=\n\n|Algorithm|Theorem|Definition|Example|$)',
+        text, re.DOTALL | re.IGNORECASE
+    )
+
+    for match in algorithm_blocks:
+        alg_name = match.group(1).strip()
+        alg_body = match.group(0).strip()
+
+        if len(alg_body) < 100 or len(alg_body) > 5000:
+            continue
+
+        question = f"Describe the {alg_name} algorithm."
+        solution = clean_text(alg_body)
+
+        pairs.append({
+            "question": question,
+            "solution": solution
+        })
+
+    # Pattern 8b: Pseudocode blocks (for/while/if statements with indentation)
+    code_blocks = re.finditer(
+        r'(?:^|\n)((?:for|while|if|function|procedure)\s+.+?(?:\n(?:[ \t]+.+?))+)',
+        text, re.MULTILINE | re.IGNORECASE
+    )
+
+    for match in code_blocks:
+        code_text = match.group(1).strip()
+
+        if len(code_text) < 80 or len(code_text) > 3000:
+            continue
+
+        # Extract what it does from context (previous line or heading)
+        context_start = max(0, match.start() - 200)
+        context = text[context_start:match.start()]
+
+        # Look for heading or topic in context
+        topic_match = re.search(r'([A-Z][a-zA-Z\s\-]+?)(?:\n|:)', context)
+        topic = topic_match.group(1).strip() if topic_match else "this algorithm"
+
+        question = f"Show the pseudocode for {topic}."
+        solution = clean_text(code_text)
+
+        pairs.append({
+            "question": question,
+            "solution": solution
+        })
+
+    if len(pairs) > initial_count:
+        print(f"    Extracted {len(pairs) - initial_count} algorithms/pseudocode from PDF")
+
+    # Strategy 9: Extract "Properties:" and "Characteristics:" sections
+    # ACCUMULATE with other strategies
+    initial_count = len(pairs)
+
+    properties_pattern = r'(?:Properties|Characteristics)[:\s]+(?:of\s+)?([A-Z][a-zA-Z\s]+?)[:\s]*\n(.+?)(?=\n\n|Properties|Theorem|Definition|Algorithm|$)'
+    matches = re.finditer(properties_pattern, text, re.DOTALL | re.IGNORECASE)
+
+    for match in matches:
+        topic = match.group(1).strip() if match.lastindex >= 1 else "this concept"
+        properties = match.group(2).strip() if match.lastindex >= 2 else match.group(1).strip()
+
+        if len(properties) < 50 or len(properties) > 2000:
+            continue
+
+        question = f"What are the properties of {topic}?"
+        solution = clean_text(properties)
+
+        pairs.append({
+            "question": question,
+            "solution": solution
+        })
+
+    if len(pairs) > initial_count:
+        print(f"    Extracted {len(pairs) - initial_count} properties/characteristics from PDF")
+
     print(f"    Extracted {len(pairs)} Q&A pairs from PDF")
     return pairs
 
@@ -311,10 +718,21 @@ def parse_text_file(file_path: Path) -> List[Dict[str, str]]:
 
 def clean_text(text: str) -> str:
     """Clean and normalize text."""
+    # Remove slide date stamps (e.g., "August23,2025 1/16")
+    text = re.sub(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\d{1,2},\s*\d{4}\s+\d+/\d+', '', text)
+
+    # Remove standalone page numbers (e.g., "1/16", "2/14")
+    text = re.sub(r'\b\d+/\d+\b', '', text)
+
+    # Remove slide header dates without page numbers (e.g., "August 23, 2025")
+    text = re.sub(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s*\d{4}\b', '', text)
+
     # Remove excessive whitespace
     text = re.sub(r'\s+', ' ', text)
+
     # Remove leading/trailing whitespace
     text = text.strip()
+
     return text
 
 
@@ -401,6 +819,26 @@ def process_qa_pair(qa_pair: Dict[str, str], tokenizer: AutoTokenizer, max_chars
 
     # Minimum length check: require substantive content
     if len(question) < 20 or len(solution) < 20:
+        return []
+
+    # QUALITY FILTERS: VERY RELAXED for maximum data extraction
+    # 1. Question should start with capital letter or digit (auto-capitalize if needed)
+    if question[0].islower():
+        # Auto-capitalize instead of rejecting
+        question = question[0].upper() + question[1:]
+
+    # 2. Solution should have some content (VERY RELAXED: 30 chars minimum)
+    if len(solution) < 30:
+        return []
+
+    # 3. Question should look somewhat complete (VERY RELAXED)
+    # Accept if: ends with punctuation, starts with common question words, or is reasonably long
+    is_complete = (
+        question.endswith(('?', '.', ':', ';')) or
+        question.startswith(('What', 'How', 'Why', 'Explain', 'Prove', 'Show', 'Define', 'State', 'Describe', 'Give', 'Find', 'Consider', 'Let', 'Suppose')) or
+        len(question) > 100  # Further reduced from 200
+    )
+    if not is_complete:
         return []
 
     # Check token count
@@ -780,8 +1218,19 @@ def save_jsonl(data: List[Dict[str, Any]], output_path: Path):
             f.write(json.dumps(item, ensure_ascii=False) + '\n')
 
 
-def process_files(files: List[Path], tokenizer: AutoTokenizer, set_name: str) -> List[Dict[str, Any]]:
-    """Process a list of files and extract Q&A pairs."""
+def process_files(files: List[Path], tokenizer: AutoTokenizer, set_name: str, is_test_set: bool = False) -> List[Dict[str, Any]]:
+    """
+    Process a list of files and extract Q&A pairs.
+
+    Args:
+        files: List of file paths to process
+        tokenizer: Tokenizer for token counting
+        set_name: Name of the dataset split (train/validation/test)
+        is_test_set: If True, process as test set (questions only, no validation)
+
+    Returns:
+        List of processed examples
+    """
     data = []
     print(f"\nProcessing {set_name} files...")
     for file_path in files:
@@ -789,7 +1238,7 @@ def process_files(files: List[Path], tokenizer: AutoTokenizer, set_name: str) ->
         try:
             file_ext = file_path.suffix.lower()
             if file_ext == '.json':
-                qa_pairs = parse_json_file(file_path)
+                qa_pairs = parse_json_file(file_path, allow_question_only=is_test_set)
             elif file_ext == '.pdf':
                 if not PDF_AVAILABLE:
                     print(f"    Skipping PDF (pdfplumber not installed): {file_path.name}")
@@ -797,16 +1246,27 @@ def process_files(files: List[Path], tokenizer: AutoTokenizer, set_name: str) ->
                 qa_pairs = parse_pdf_file(file_path)
             else:
                 qa_pairs = parse_text_file(file_path)
-            
-            for qa_pair in qa_pairs:
-                processed = process_qa_pair(qa_pair, tokenizer)
-                data.extend(processed)
+
+            # For test set, only keep questions (no solution validation)
+            if is_test_set:
+                for qa_pair in qa_pairs:
+                    question = clean_text(qa_pair.get("question", ""))
+                    if question:
+                        # Test set: questions only, no solutions
+                        data.append({
+                            "question": question
+                        })
+            else:
+                # For train/validation: full validation and processing
+                for qa_pair in qa_pairs:
+                    processed = process_qa_pair(qa_pair, tokenizer)
+                    data.extend(processed)
         except Exception as e:
             print(f"    Error processing {file_path.name}: {e}")
             import traceback
             traceback.print_exc()
             continue
-    
+
     return data
 
 
@@ -877,9 +1337,9 @@ def main(
         print(f"  Test files (future exams): {[f.name for f in test_files]}")
     
     # Process all file sets
-    train_data = process_files(train_files, tokenizer, "training")
-    validation_data = process_files(validation_files, tokenizer, "validation")
-    test_data = process_files(test_files, tokenizer, "test")
+    train_data = process_files(train_files, tokenizer, "training", is_test_set=False)
+    validation_data = process_files(validation_files, tokenizer, "validation", is_test_set=False)
+    test_data = process_files(test_files, tokenizer, "test", is_test_set=True)  # Test set: questions only
     
     # Save processed data
     print(f"\nSaving processed data to: {processed_dir}")
