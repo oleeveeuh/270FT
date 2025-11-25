@@ -288,6 +288,8 @@ def train_model(
             quantization_config=bnb_config,
             device_map="auto",
             trust_remote_code=True,
+            low_cpu_mem_usage=True,  # Reduce CPU memory usage during loading
+            max_memory={0: "14GB", "cpu": "30GB"},  # Set memory limits for Colab T4
         )
         
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
