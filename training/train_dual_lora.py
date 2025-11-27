@@ -346,7 +346,7 @@ def train_model(
     target_modules = get_target_modules_for_model(model_name)
     
     # NOW CREATE LORA CONFIG WITH THE TARGET MODULES
-    lora_config = LoRAConfig(
+    lora_config = LoraConfig(
         r=config["training"].get("lora_r", 8),
         lora_alpha=config["training"].get("lora_alpha", 16),
         target_modules=target_modules,
