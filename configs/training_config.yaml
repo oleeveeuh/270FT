@@ -2,12 +2,53 @@ data_dir: "data/raw"
 processed_dir: "data/processed"
 
 models:
-  # LLaMA 3.1 requires Hugging Face authentication - commented out for now
-  # Uncomment after getting approval at: https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct
-  # - name: "meta-llama/Llama-3.1-8B-Instruct"
-  #   output_dir: "models/llama3.1_lora"
+  # ===== CURRENTLY ENABLED =====
   - name: "Qwen/Qwen2.5-7B-Instruct"
-    output_dir: "models/qwen3_lora"
+    output_dir: "models/qwen2.5_7b_lora"
+
+  # ===== LLAMA MODELS (require HF authentication) =====
+  # Request access at: https://huggingface.co/meta-llama
+  # Then run: huggingface-cli login
+
+  # LLaMA 3.1 8B (Meta's latest, excellent for reasoning)
+  - name: "meta-llama/Llama-3.1-8B-Instruct"
+    output_dir: "models/llama3.1_8b_lora"
+
+  # LLaMA 3.2 3B (Smaller, faster, good for comparison)
+  - name: "meta-llama/Llama-3.2-3B-Instruct"
+    output_dir: "models/llama3.2_3b_lora"
+
+  # LLaMA 3.2 1B (Smallest, fastest, baseline comparison)
+  - name: "meta-llama/Llama-3.2-1B-Instruct"
+    output_dir: "models/llama3.2_1b_lora"
+
+  # ===== GPT-STYLE MODELS (open source alternatives) =====
+
+  # Phi-3.5 Mini (Microsoft, 3.8B params, excellent small model)
+  - name: "microsoft/Phi-3.5-mini-instruct"
+    output_dir: "models/phi3.5_mini_lora"
+
+  # Phi-3 Medium (14B params, stronger reasoning)
+  # - name: "microsoft/Phi-3-medium-4k-instruct"
+  #   output_dir: "models/phi3_medium_lora"
+
+  # Gemma 2B (Google, efficient small model)
+  - name: "google/gemma-2-2b-it"
+    output_dir: "models/gemma2_2b_lora"
+
+  # Gemma 9B (Google, stronger performance)
+  # - name: "google/gemma-2-9b-it"
+  #   output_dir: "models/gemma2_9b_lora"
+
+  # ===== OTHER COMPARISON MODELS =====
+
+  # Mistral 7B v0.3 (strong baseline, widely used)
+  - name: "mistralai/Mistral-7B-Instruct-v0.3"
+    output_dir: "models/mistral_7b_lora"
+
+  # TinyLlama 1.1B (smallest model, fast baseline)
+  - name: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    output_dir: "models/tinyllama_1.1b_lora"
 
 training:
   epochs: 3

@@ -5,6 +5,7 @@ Training script for dual QLoRA fine-tuning on LLaMA 3 and Qwen 3 models.
 import os
 import json
 import yaml
+import argparse
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 import torch
@@ -453,11 +454,35 @@ def train_model(
 
 def main():
     """Main training function."""
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description="Train QLoRA models on algorithmic problem solving dataset"
+    )
+    parser.add_argument(
+        "--models",
+        type=str,
+        nargs="+",
+        help="Specific model(s) to train. Can specify by name (e.g., 'Qwen/Qwen2.5-7B-Instruct') "
+             "or by index (e.g., '0' for first model in config, '1' for second). "
+             "If not specified, trains all models in config.",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to training config YAML file (default: configs/training_config.yaml)",
+    )
+    args = parser.parse_args()
+
     # Get project root (go up from training/train_dual_lora.py to project root)
     project_root = Path(__file__).parent.parent
-    config_path = project_root / "configs" / "training_config.yaml"
 
     # Load config
+    if args.config:
+        config_path = Path(args.config)
+    else:
+        config_path = project_root / "configs" / "training_config.yaml"
+
     config = load_config(str(config_path))
 
     # Setup paths
@@ -522,11 +547,47 @@ def main():
     # Load and tokenize training dataset (will be reused for both models)
     print("Loading training dataset...")
     # We'll tokenize separately for each model since tokenizers differ
-    
+
+    # Filter models based on command-line arguments
+    models_to_train = config["models"]
+
+    if args.models:
+        print(f"\nFiltering models based on command-line arguments: {args.models}")
+        filtered_models = []
+
+        for model_spec in args.models:
+            # Try to match by index (e.g., "0", "1")
+            if model_spec.isdigit():
+                idx = int(model_spec)
+                if idx < len(config["models"]):
+                    filtered_models.append(config["models"][idx])
+                    print(f"  Added model at index {idx}: {config['models'][idx]['name']}")
+                else:
+                    print(f"  Warning: Index {idx} out of range (only {len(config['models'])} models in config)")
+            else:
+                # Try to match by name (exact or partial)
+                matched = False
+                for model_config in config["models"]:
+                    if model_spec in model_config["name"] or model_config["name"] in model_spec:
+                        filtered_models.append(model_config)
+                        print(f"  Added model: {model_config['name']}")
+                        matched = True
+                        break
+                if not matched:
+                    print(f"  Warning: No model matching '{model_spec}' found in config")
+
+        if filtered_models:
+            models_to_train = filtered_models
+            print(f"\nWill train {len(models_to_train)} model(s)")
+        else:
+            print("\nWarning: No models matched the specified arguments. Will train all models in config.")
+    else:
+        print(f"\nNo --models argument specified. Will train all {len(models_to_train)} models in config.")
+
     # Train each model
     all_results = {}
-    
-    for model_config in config["models"]:
+
+    for model_config in models_to_train:
         model_name = model_config["name"]
         output_dir = project_root / model_config["output_dir"]
         output_dir.mkdir(parents=True, exist_ok=True)
