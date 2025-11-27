@@ -1,6 +1,7 @@
 """
 Training script for dual QLoRA fine-tuning on LLaMA 3 and Qwen 3 models.
 Fixed to handle Phi-3.5 DynamicCache compatibility issues.
+Fixed to support Falcon-7B architecture.
 """
 
 import os
@@ -61,8 +62,6 @@ except ImportError:
     HF_HUB_AVAILABLE = False
     print("Warning: huggingface_hub not available. Install with: pip install huggingface_hub")
 
-# Script patch to add to train_dual_lora.py
-# Add this function at the top of the file (after imports, around line 50)
 
 def get_target_modules_for_model(model_name: str) -> list:
     """
@@ -87,7 +86,6 @@ def get_target_modules_for_model(model_name: str) -> list:
     # Default for LLaMA-family (covers: TinyLlama, SmolLM3, Ministral, 
     # DeepSeek, Qwen, Mistral, Phi, etc.)
     return ["q_proj", "v_proj", "k_proj", "o_proj", "up_proj", "gate_proj", "down_proj"]
-
 
 
 def load_config(config_path: str) -> Dict[str, Any]:
@@ -439,14 +437,14 @@ def train_model(
     elif config["training"].get("gradient_checkpointing", False) and ("Phi" in model_name or "phi" in model_name):
         print("Gradient checkpointing disabled for Phi model (cache compatibility)")
     
-    # Configure LoRA
+    # Configure LoRA with proper model-specific target modules
     target_modules = get_target_modules_for_model(model_name)
 
     lora_config = LoRAConfig(
-        r=lora_config_dict.get("lora_r", 8),
-        lora_alpha=lora_config_dict.get("lora_alpha", 16),
+        r=config["training"].get("lora_r", 8),
+        lora_alpha=config["training"].get("lora_alpha", 16),
         target_modules=target_modules,
-        lora_dropout=lora_config_dict.get("lora_dropout", 0.05),
+        lora_dropout=config["training"].get("lora_dropout", 0.05),
         bias="none",
         task_type="CAUSAL_LM",
         inference_mode=False,
@@ -548,18 +546,6 @@ def train_model(
     # Test data may not have solutions, so we only use it for inference after training
     if test_data_path and validation_dataset:  # Only if we have separate validation
         print(f"\nSkipping test set evaluation during training (test data reserved for human-in-the-loop evaluation)")
-        # test_data = load_test_data(test_data_path)
-        # max_length = config["training"].get("max_length", 2048)
-        # test_dataset = load_and_tokenize_dataset(
-        #     test_data_path,
-        #     tokenizer,
-        #     max_length=max_length,
-        # )
-        # test_results = trainer.evaluate(eval_dataset=test_dataset)
-        # # Add test metrics with 'test_' prefix
-        # for key, value in test_results.items():
-        #     eval_results[f"test_{key}"] = value
-        # print(f"Test set results: {test_results}")
     
     # Save adapter
     print(f"Saving adapter to {output_dir}...")
