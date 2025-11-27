@@ -293,15 +293,22 @@ def train_model(
     # Load model and tokenizer
     print(f"Loading model and tokenizer...")
     try:
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            quantization_config=bnb_config,
-            device_map="auto",
-            trust_remote_code=True,
-            low_cpu_mem_usage=True,  # Reduce CPU memory usage during loading
-            max_memory={0: "14GB", "cpu": "30GB"},  # Set memory limits for Colab T4
-        )
-        
+        # Phi-3.5 models require attn_implementation='eager' to avoid cache compatibility issues
+        model_kwargs = {
+            "quantization_config": bnb_config,
+            "device_map": "auto",
+            "trust_remote_code": True,
+            "low_cpu_mem_usage": True,  # Reduce CPU memory usage during loading
+            "max_memory": {0: "14GB", "cpu": "30GB"},  # Set memory limits for Colab T4
+        }
+
+        # Add attn_implementation for Phi-3.5 models to fix DynamicCache compatibility
+        if "Phi" in model_name or "phi" in model_name:
+            model_kwargs["attn_implementation"] = "eager"
+            print("  Using eager attention for Phi model (compatibility fix)")
+
+        model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
+
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     except OSError as e:
         if "not a valid model identifier" in str(e) or "not a local folder" in str(e):
