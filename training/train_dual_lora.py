@@ -61,6 +61,34 @@ except ImportError:
     HF_HUB_AVAILABLE = False
     print("Warning: huggingface_hub not available. Install with: pip install huggingface_hub")
 
+# Script patch to add to train_dual_lora.py
+# Add this function at the top of the file (after imports, around line 50)
+
+def get_target_modules_for_model(model_name: str) -> list:
+    """
+    Get appropriate LoRA target modules based on model architecture.
+    
+    Different model families use different layer naming conventions:
+    - Falcon: query_key_value, dense, dense_h_to_4h, dense_4h_to_h
+    - LLaMA-family: q_proj, v_proj, k_proj, o_proj, up_proj, gate_proj, down_proj
+    
+    Args:
+        model_name: HuggingFace model identifier
+        
+    Returns:
+        List of target module names for LoRA injection
+    """
+    model_name_lower = model_name.lower()
+    
+    # Falcon-specific target modules
+    if "falcon" in model_name_lower:
+        return ["query_key_value", "dense", "dense_h_to_4h", "dense_4h_to_h"]
+    
+    # Default for LLaMA-family (covers: TinyLlama, SmolLM3, Ministral, 
+    # DeepSeek, Qwen, Mistral, Phi, etc.)
+    return ["q_proj", "v_proj", "k_proj", "o_proj", "up_proj", "gate_proj", "down_proj"]
+
+
 
 def load_config(config_path: str) -> Dict[str, Any]:
     """Load configuration from YAML file."""
@@ -412,13 +440,16 @@ def train_model(
         print("Gradient checkpointing disabled for Phi model (cache compatibility)")
     
     # Configure LoRA
-    lora_config = LoraConfig(
-        r=config["training"]["lora_r"],
-        lora_alpha=config["training"]["lora_alpha"],
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        lora_dropout=config["training"]["lora_dropout"],
+    target_modules = get_target_modules_for_model(model_name)
+
+    lora_config = LoRAConfig(
+        r=lora_config_dict.get("lora_r", 8),
+        lora_alpha=lora_config_dict.get("lora_alpha", 16),
+        target_modules=target_modules,
+        lora_dropout=lora_config_dict.get("lora_dropout", 0.05),
         bias="none",
         task_type="CAUSAL_LM",
+        inference_mode=False,
     )
     
     # Apply LoRA
