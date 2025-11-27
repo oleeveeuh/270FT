@@ -38,8 +38,13 @@ def patch_phi_dynamic_cache():
         
         # Add the old method name as an alias to the new one if it doesn't exist
         if not hasattr(DynamicCache, 'get_usable_length'):
-            def get_usable_length(self, seq_length):
-                """Alias for get_seq_length for backwards compatibility."""
+            def get_usable_length(self, seq_length, layer_idx=None):
+                """Alias for get_seq_length for backwards compatibility.
+                
+                Args:
+                    seq_length: Current sequence length
+                    layer_idx: Layer index (optional, used by newer Phi versions)
+                """
                 return self.get_seq_length()
             
             DynamicCache.get_usable_length = get_usable_length
