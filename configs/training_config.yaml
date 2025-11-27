@@ -17,6 +17,7 @@ models:
   - name: "mistralai/Mistral-7B-Instruct-v0.3"
     output_dir: "models/mistral_7b_lora"
 
+
 models:
   # ============================================================
   # SMALL MODELS (1.1B - 3.8B)
@@ -33,10 +34,10 @@ models:
     category: "small"
     description: "Sweet spot for small data - improved reasoning over TinyLlama, dual-mode reasoning"
 
-  # - name: "google/gemma-2-2b-it"
-  #   output_dir: "models/gemma2_2b_lora"
-  #   category: "small"
-  #   description: "Google's efficient 2B model - strong performance, good instruction-following"
+  - name: "ministral/Ministral-3b-instruct"
+    output_dir: "models/ministral_3b_lora"
+    category: "small"
+    description: "Mistral's compact 3B model - strong performance, no authentication needed"
 
   # ============================================================
   # MEDIUM MODELS (7B parameters)
@@ -69,15 +70,11 @@ models:
     category: "medium_alternative"
     description: "Best for fine-tuning customization - extensive community support"
 
-  - name: "tiiuae/falcon-3-7b-instruct"
-    output_dir: "models/falcon3_7b_lora"
+  - name: "tiiuae/falcon-7b-instruct"
+    output_dir: "models/falcon_7b_lora"
     category: "medium_alternative"
-    description: "Most efficient 7B - fast inference and training"
+    description: "Falcon-7B Instruct - fully open Apache 2.0, proven stable model"
 
-  - name: "mistralai/Ministral-3B"
-    output_dir: "models/ministral_3b_lora"
-    category: "small_alternative"
-    description: "Mistral's 3B model - optimized for edge computing and efficiency"
 
 # ============================================================
 # TRAINING CONFIGURATION
