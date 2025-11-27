@@ -273,14 +273,20 @@ def train_model(
     
     # Initialize W&B if enabled
     if config["logging"]["use_wandb"]:
-        wandb.init(
-            project=config["logging"]["project"],
-            name=f"{model_name.split('/')[-1]}_qlora",
-            config={
-                "model": model_name,
-                **config["training"],
-            },
-        )
+        try:
+            wandb.init(
+                project=config["logging"]["project"],
+                name=f"{model_name.split('/')[-1]}_qlora",
+                config={
+                    "model": model_name,
+                    **config["training"],
+                },
+            )
+        except Exception as e:
+            print(f"Warning: Failed to initialize W&B: {e}")
+            print("Continuing without W&B logging...")
+    else:
+        print("W&B logging disabled")
     
     # Configure 4-bit quantization
     bnb_config = BitsAndBytesConfig(
@@ -293,21 +299,49 @@ def train_model(
     # Load model and tokenizer
     print(f"Loading model and tokenizer...")
     try:
-        # Phi-3.5 models require attn_implementation='eager' to avoid cache compatibility issues
-        model_kwargs = {
-            "quantization_config": bnb_config,
-            "device_map": "auto",
-            "trust_remote_code": True,
-            "low_cpu_mem_usage": True,  # Reduce CPU memory usage during loading
-            "max_memory": {0: "14GB", "cpu": "30GB"},  # Set memory limits for Colab T4
-        }
+        # Check device availability and configure appropriately
+        if torch.cuda.is_available():
+            print(f"  CUDA available: {torch.cuda.device_count()} device(s)")
+            model_kwargs = {
+                "quantization_config": bnb_config,
+                "device_map": "auto",
+                "trust_remote_code": True,
+                "low_cpu_mem_usage": True,  # Reduce CPU memory usage during loading
+                "max_memory": {0: "14GB", "cpu": "30GB"},  # Set memory limits for Colab T4
+            }
+        elif torch.backends.mps.is_available():
+            print("  MPS available, but forcing CPU for memory constraints")
+            # MPS available but memory limited, use CPU mode
+            model_kwargs = {
+                "trust_remote_code": True,
+                "low_cpu_mem_usage": True,
+                "torch_dtype": torch.float32,  # Use float32 on CPU
+                # Note: No quantization on CPU
+            }
+        else:
+            print("  CUDA/MPS not available, using CPU mode")
+            model_kwargs = {
+                "trust_remote_code": True,
+                "low_cpu_mem_usage": True,
+                "torch_dtype": torch.float32,  # Use float32 on CPU
+                # Note: No quantization on CPU
+            }
 
         # Add attn_implementation for Phi-3.5 models to fix DynamicCache compatibility
         if "Phi" in model_name or "phi" in model_name:
             model_kwargs["attn_implementation"] = "eager"
+            # Disable gradient checkpointing for Phi models to avoid cache issues
+            config["training"]["gradient_checkpointing"] = False
             print("  Using eager attention for Phi model (compatibility fix)")
+            print("  Disabled gradient checkpointing for Phi model (cache compatibility)")
 
-        model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
+        # Only use quantization config if CUDA is available
+        if torch.cuda.is_available():
+            model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
+        else:
+            # Load without quantization on CPU
+            print("  Loading model without quantization (CPU mode)")
+            model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
 
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     except OSError as e:
@@ -332,13 +366,18 @@ def train_model(
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
     
-    # Prepare model for k-bit training
-    model = prepare_model_for_kbit_training(model)
+    # Prepare model for k-bit training (only if using quantization)
+    if torch.cuda.is_available():
+        model = prepare_model_for_kbit_training(model)
     
     # Enable gradient checkpointing if specified (saves memory)
-    if config["training"].get("gradient_checkpointing", False):
+    # But not for Phi models due to cache compatibility issues
+    if (config["training"].get("gradient_checkpointing", False) and
+        not ("Phi" in model_name or "phi" in model_name)):
         model.gradient_checkpointing_enable()
         print("Gradient checkpointing enabled (memory optimization)")
+    elif config["training"].get("gradient_checkpointing", False) and ("Phi" in model_name or "phi" in model_name):
+        print("Gradient checkpointing disabled for Phi model (cache compatibility)")
     
     # Configure LoRA
     lora_config = LoraConfig(
@@ -383,16 +422,16 @@ def train_model(
         per_device_eval_batch_size=min(config["training"]["batch_size"], 2),  # Smaller eval batch
         gradient_accumulation_steps=config["training"].get("gradient_accumulation_steps", 1),
         learning_rate=float(config["training"]["learning_rate"]),  # Ensure float type
-        fp16=True,
+        fp16=torch.cuda.is_available(),  # Only use fp16 if CUDA available
         gradient_checkpointing=config["training"].get("gradient_checkpointing", False),
         logging_steps=10,
         save_strategy="epoch",  # Match eval_strategy for load_best_model_at_end
         eval_strategy="epoch",
         save_total_limit=3,
         load_best_model_at_end=True,
-        report_to="wandb" if config["logging"]["use_wandb"] else None,
+        report_to=["wandb"] if config["logging"]["use_wandb"] else None,
         run_name=f"{model_name.split('/')[-1]}_qlora",
-        optim="paged_adamw_8bit",  # Memory-efficient optimizer
+        optim="paged_adamw_8bit" if torch.cuda.is_available() else "adamw_torch",  # Use appropriate optimizer
         max_grad_norm=0.3,  # Gradient clipping for stability
     )
     
@@ -454,7 +493,10 @@ def train_model(
     
     # Finish W&B run
     if config["logging"]["use_wandb"]:
-        wandb.finish()
+        try:
+            wandb.finish()
+        except Exception:
+            pass  # W&B wasn't initialized, so nothing to finish
     
     return eval_results
 
