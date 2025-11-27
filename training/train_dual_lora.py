@@ -1,5 +1,6 @@
 """
 Training script for dual QLoRA fine-tuning on LLaMA 3 and Qwen 3 models.
+Fixed to handle Phi-3.5 DynamicCache compatibility issues.
 """
 
 import os
@@ -23,6 +24,29 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from datasets import load_dataset, Dataset
 import wandb
 from evaluate import load as load_metric
+
+
+def patch_phi_dynamic_cache():
+    """
+    Patch Phi-3.5 model to fix DynamicCache compatibility issue.
+    
+    The Phi-3.5 model uses get_usable_length() which was renamed to get_seq_length()
+    in newer transformers versions. This patch adds backwards compatibility.
+    """
+    try:
+        from transformers.cache_utils import DynamicCache
+        
+        # Add the old method name as an alias to the new one if it doesn't exist
+        if not hasattr(DynamicCache, 'get_usable_length'):
+            def get_usable_length(self, seq_length):
+                """Alias for get_seq_length for backwards compatibility."""
+                return self.get_seq_length()
+            
+            DynamicCache.get_usable_length = get_usable_length
+            print("[OK] Applied DynamicCache compatibility patch for Phi-3.5")
+    except Exception as e:
+        print(f"[WARNING] Could not apply DynamicCache patch: {e}")
+
 
 # Hugging Face authentication
 try:
@@ -334,6 +358,9 @@ def train_model(
             config["training"]["gradient_checkpointing"] = False
             print("  Using eager attention for Phi model (compatibility fix)")
             print("  Disabled gradient checkpointing for Phi model (cache compatibility)")
+            
+            # Apply the DynamicCache patch before loading the model
+            patch_phi_dynamic_cache()
 
         # Only use quantization config if CUDA is available
         if torch.cuda.is_available():
@@ -697,4 +724,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
