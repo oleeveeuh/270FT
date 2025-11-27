@@ -28,7 +28,7 @@ models:
     category: "small"
     description: "Baseline small model - fastest training, lowest overfitting risk"
 
-  - name: "HuggingFaceTB/SmolLM3-3B-Instruct"
+  - name: "HuggingFaceTB/SmolLM3-3B"
     output_dir: "models/smollm3_3b_lora"
     category: "small"
     description: "Sweet spot for small data - improved reasoning over TinyLlama, dual-mode reasoning"
