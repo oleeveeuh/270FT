@@ -33,10 +33,10 @@ models:
     category: "small"
     description: "Sweet spot for small data - improved reasoning over TinyLlama, dual-mode reasoning"
 
-  - name: "google/gemma-2-2b-it"
-    output_dir: "models/gemma2_2b_lora"
-    category: "small"
-    description: "Google's efficient 2B model - strong performance, good instruction-following"
+  # - name: "google/gemma-2-2b-it"
+  #   output_dir: "models/gemma2_2b_lora"
+  #   category: "small"
+  #   description: "Google's efficient 2B model - strong performance, good instruction-following"
 
   # ============================================================
   # MEDIUM MODELS (7B parameters)
