@@ -2,69 +2,101 @@ data_dir: "data/raw"
 processed_dir: "data/processed"
 
 models:
-  # ===== CURRENTLY ENABLED =====
-  - name: "Qwen/Qwen2.5-7B-Instruct"
-    output_dir: "models/qwen2.5_7b_lora"
-
-  # ===== LLAMA MODELS (require HF authentication) =====
-  # Request access at: https://huggingface.co/meta-llama
-  # Then run: huggingface-cli login
-
-  # LLaMA 3.1 8B (Meta's latest, excellent for reasoning)
-  # - name: "meta-llama/Llama-3.1-8B-Instruct"
-  #   output_dir: "models/llama3.1_8b_lora"
-
-  # # LLaMA 3.2 3B (Smaller, faster, good for comparison)
-  # - name: "meta-llama/Llama-3.2-3B-Instruct"
-  #   output_dir: "models/llama3.2_3b_lora"
-
-  # # LLaMA 3.2 1B (Smallest, fastest, baseline comparison)
-  # - name: "meta-llama/Llama-3.2-1B-Instruct"
-  #   output_dir: "models/llama3.2_1b_lora"
-
-  # ===== GPT-STYLE MODELS (open source alternatives) =====
-
-  # Phi-3.5 Mini (Microsoft, 3.8B params, excellent small model)
-  - name: "microsoft/Phi-3.5-mini-instruct"
-    output_dir: "models/phi3.5_mini_lora"
-
-  # Phi-3 Medium (14B params, stronger reasoning)
-  # - name: "microsoft/Phi-3-medium-4k-instruct"
-  #   output_dir: "models/phi3_medium_lora"
-
-  # Gemma 2B (Google, efficient small model)
-  - name: "google/gemma-2-2b-it"
-    output_dir: "models/gemma2_2b_lora"
-
-  # Gemma 9B (Google, stronger performance)
-  # - name: "google/gemma-2-9b-it"
-  #   output_dir: "models/gemma2_9b_lora"
-
-  # ===== OTHER COMPARISON MODELS =====
-
-  # Mistral 7B v0.3 (strong baseline, widely used)
-  - name: "mistralai/Mistral-7B-Instruct-v0.3"
-    output_dir: "models/mistral_7b_lora"
-
-  # TinyLlama 1.1B (smallest model, fast baseline)
   - name: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
     output_dir: "models/tinyllama_1.1b_lora"
 
+  - name: "Qwen/Qwen2.5-7B-Instruct"
+    output_dir: "models/qwen2.5_7b_lora"
+
+  - name: "microsoft/Phi-3.5-mini-instruct"
+    output_dir: "models/phi3.5_mini_lora"
+
+  - name: "google/gemma-2-2b-it"
+    output_dir: "models/gemma2_2b_lora"
+
+  - name: "mistralai/Mistral-7B-Instruct-v0.3"
+    output_dir: "models/mistral_7b_lora"
+
+models:
+  # ============================================================
+  # SMALL MODELS (1.1B - 3.8B)
+  # ============================================================
+  # Recommended: Start with these for small datasets
+  
+  - name: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    output_dir: "models/tinyllama_1.1b_lora"
+    category: "small"
+    description: "Baseline small model - fastest training, lowest overfitting risk"
+
+  - name: "HuggingFaceTB/SmolLM3-3B-Instruct"
+    output_dir: "models/smollm3_3b_lora"
+    category: "small"
+    description: "Sweet spot for small data - improved reasoning over TinyLlama, dual-mode reasoning"
+
+  - name: "google/gemma-2-2b-it"
+    output_dir: "models/gemma2_2b_lora"
+    category: "small"
+    description: "Google's efficient 2B model - strong performance, good instruction-following"
+
+  # ============================================================
+  # MEDIUM MODELS (7B parameters)
+  # ============================================================
+  # Recommended: Use these for comparison with small models
+  
+  - name: "deepseek-ai/deepseek-7b-chat"
+    output_dir: "models/deepseek_7b_lora"
+    category: "medium"
+    description: "Best for reasoning/math/coding - excellent for algorithmic problems"
+
+  - name: "Qwen/Qwen2.5-7B-Instruct"
+    output_dir: "models/qwen2.5_7b_lora"
+    category: "medium"
+    description: "Most versatile - strong multilingual, dialogue, and structured reasoning"
+
+  # ============================================================
+  # ALTERNATIVE MODELS
+  # ============================================================
+  # Use these if you want additional experiments or alternatives
+  
+  # Alternative small models
+  - name: "microsoft/phi-3.5-mini-instruct"
+    output_dir: "models/phi3.5_mini_lora"
+    category: "small_alternative"
+    description: "Microsoft's efficient model (3.8B) - good for reasoning, but has compatibility issues"
+
+  - name: "mistralai/Mistral-7B-Instruct-v0.3"
+    output_dir: "models/mistral_7b_lora"
+    category: "medium_alternative"
+    description: "Best for fine-tuning customization - extensive community support"
+
+  - name: "tiiuae/falcon-3-7b-instruct"
+    output_dir: "models/falcon3_7b_lora"
+    category: "medium_alternative"
+    description: "Most efficient 7B - fast inference and training"
+
+  - name: "mistralai/Ministral-3B"
+    output_dir: "models/ministral_3b_lora"
+    category: "small_alternative"
+    description: "Mistral's 3B model - optimized for edge computing and efficiency"
+
+# ============================================================
+# TRAINING CONFIGURATION
+# ==========
 training:
-  epochs: 3
+  epochs: 1  # Quick test run
   learning_rate: 0.0002  # 2e-4 in decimal notation
-  batch_size: 2  # Optimized for Colab T4 (16GB VRAM). Use 1 for 8GB local GPUs
-  gradient_accumulation_steps: 2  # Effective batch size = 2 * 2 = 4
-  max_length: 1024  # Can increase to 2048 on A100 GPUs
+  batch_size: 1  # Minimal batch size
+  gradient_accumulation_steps: 2  # Effective batch size = 1 * 2 = 2
+  max_length: 256  # Very short sequences for testing
   gradient_checkpointing: true  # Trade compute for memory
-  lora_r: 8
-  lora_alpha: 16
-  lora_dropout: 0.05
+  lora_r: 4  # Smaller LoRA rank for testing
+  lora_alpha: 8
+  lora_dropout: 0.1
 
 evaluation:
   metrics: ["exact_match", "bleu", "symbolic_equivalence"]
 
 logging:
-  use_wandb: true
+  use_wandb: false
   project: "270FT"
 
