@@ -423,13 +423,25 @@ def train_model(
         model = prepare_model_for_kbit_training(model)
     
     # Enable gradient checkpointing if specified (saves memory)
-    # But not for Phi models due to cache compatibility issues
-    if (config["training"].get("gradient_checkpointing", False) and
-        not ("Phi" in model_name or "phi" in model_name)):
+    # But not for Phi or Falcon models due to cache compatibility issues
+    should_enable_grad_checkpointing = (
+        config["training"].get("gradient_checkpointing", False) and
+        not ("Phi" in model_name or "phi" in model_name) and
+        not ("falcon" in model_name.lower())
+    )
+    
+    if should_enable_grad_checkpointing:
         model.gradient_checkpointing_enable()
         print("Gradient checkpointing enabled (memory optimization)")
-    elif config["training"].get("gradient_checkpointing", False) and ("Phi" in model_name or "phi" in model_name):
-        print("Gradient checkpointing disabled for Phi model (cache compatibility)")
+    else:
+        if "Phi" in model_name or "phi" in model_name:
+            print("Gradient checkpointing disabled for Phi model (cache compatibility)")
+        elif "falcon" in model_name.lower():
+            print("Gradient checkpointing disabled for Falcon model (cache compatibility)")
+    
+    # Force gradient_checkpointing to False for Phi and Falcon
+    if ("Phi" in model_name or "phi" in model_name or "falcon" in model_name.lower()):
+        config["training"]["gradient_checkpointing"] = False
     
     # Configure LoRA with proper model-specific target modules
     target_modules = get_target_modules_for_model(model_name)
