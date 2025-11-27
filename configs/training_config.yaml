@@ -43,10 +43,10 @@ models:
   # ============================================================
   # Recommended: Use these for comparison with small models
   
-  - name: "deepseek-ai/deepseek-7b-chat"
+  - name: "deepseek-ai/deepseek-llm-7b-chat"
     output_dir: "models/deepseek_7b_lora"
     category: "medium"
-    description: "Best for reasoning/math/coding - excellent for algorithmic problems"
+    description: "DeepSeek LLM 7B Chat - excellent for reasoning/math/coding"
 
   - name: "Qwen/Qwen2.5-7B-Instruct"
     output_dir: "models/qwen2.5_7b_lora"
