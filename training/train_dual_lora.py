@@ -489,6 +489,18 @@ def train_model(
         compute_metrics=compute_metrics_fn,
     )
     
+    # For Phi models, disable cache during evaluation to avoid attention shape mismatches
+    # The cache state can become inconsistent between training and eval with gradient checkpointing
+    if "Phi" in model_name or "phi" in model_name:
+        try:
+            # Access the base model (might be wrapped by PEFT)
+            base_model = model.module if hasattr(model, 'module') else model
+            if hasattr(base_model, 'model'):
+                base_model.model.config.use_cache = False
+                print("Disabled caching for Phi model evaluation (prevents attention shape mismatches)")
+        except Exception as e:
+            print(f"Warning: Could not disable cache for Phi model: {e}")
+    
     # Train
     print(f"Starting training...")
     trainer.train()
