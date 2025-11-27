@@ -460,6 +460,11 @@ def train_model(
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
     
+    # Disable use_cache for Falcon to fix KV cache conversion error with LoRA
+    if "falcon" in model_name.lower():
+        model.config.use_cache = False
+        print("Disabled use_cache for Falcon model (KV cache compatibility with LoRA)")
+    
     # Load validation data (for evaluation during training)
     validation_dataset = None
     if validation_data_path:
