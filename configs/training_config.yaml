@@ -11,16 +11,16 @@ models:
   # Then run: huggingface-cli login
 
   # LLaMA 3.1 8B (Meta's latest, excellent for reasoning)
-  - name: "meta-llama/Llama-3.1-8B-Instruct"
-    output_dir: "models/llama3.1_8b_lora"
+  # - name: "meta-llama/Llama-3.1-8B-Instruct"
+  #   output_dir: "models/llama3.1_8b_lora"
 
-  # LLaMA 3.2 3B (Smaller, faster, good for comparison)
-  - name: "meta-llama/Llama-3.2-3B-Instruct"
-    output_dir: "models/llama3.2_3b_lora"
+  # # LLaMA 3.2 3B (Smaller, faster, good for comparison)
+  # - name: "meta-llama/Llama-3.2-3B-Instruct"
+  #   output_dir: "models/llama3.2_3b_lora"
 
-  # LLaMA 3.2 1B (Smallest, fastest, baseline comparison)
-  - name: "meta-llama/Llama-3.2-1B-Instruct"
-    output_dir: "models/llama3.2_1b_lora"
+  # # LLaMA 3.2 1B (Smallest, fastest, baseline comparison)
+  # - name: "meta-llama/Llama-3.2-1B-Instruct"
+  #   output_dir: "models/llama3.2_1b_lora"
 
   # ===== GPT-STYLE MODELS (open source alternatives) =====
 
