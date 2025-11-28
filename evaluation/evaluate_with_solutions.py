@@ -142,23 +142,29 @@ def compute_levenshtein(reference: str, prediction: str) -> float:
     Returns:
         float: Similarity score between 0.0 and 1.0
     """
-    try:
-        import Levenshtein
-    except ImportError:
-        print("Warning: python-Levenshtein not available for Levenshtein distance")
-        return 0.0
-
     ref = reference.strip()
     pred = prediction.strip()
 
     if not ref or not pred:
         return 0.0
 
-    distance = Levenshtein.distance(ref, pred)
-    max_len = max(len(ref), len(pred))
-    if max_len == 0:
-        return 1.0
-    return 1 - (distance / max_len)
+    # Try to use python-Levenshtein first (faster)
+    try:
+        import Levenshtein
+        distance = Levenshtein.distance(ref, pred)
+        max_len = max(len(ref), len(pred))
+        if max_len == 0:
+            return 1.0
+        return 1 - (distance / max_len)
+    except ImportError:
+        # Fallback to simple character-based similarity
+        # This is less accurate but provides a reasonable approximation
+        from difflib import SequenceMatcher
+        ratio = SequenceMatcher(None, ref, pred).ratio()
+        return ratio
+    except Exception:
+        # Any other error, return 0.0
+        return 0.0
 
 
 def compute_numeric_close(reference: str, prediction: str, tol: float = 1e-3) -> bool:
@@ -346,6 +352,8 @@ def evaluate_model(
             "exact_matches": 0,
             "bleu_scores": [],
             "levenshtein_scores": [],
+            "sympy_equiv_count": 0,
+            "numeric_close_count": 0,
         },
         "per_item_results": [],
         "human_review_needed": [],
@@ -389,18 +397,21 @@ def evaluate_model(
             numeric_close = compute_numeric_close(reference_solution, prediction)
             levenshtein_score = compute_levenshtein(reference_solution, prediction)
 
+            # Always append scores (for both exact matches and non-matches)
+            results["automated_metrics"]["bleu_scores"].append(bleu_score)
+            results["automated_metrics"]["levenshtein_scores"].append(levenshtein_score)
+
+            # Count exact matches
             if exact_match:
                 results["automated_metrics"]["exact_matches"] += 1
-                results["automated_metrics"]["bleu_scores"].append(bleu_score)
-                results["automated_metrics"]["levenshtein_scores"].append(levenshtein_score)
-                results["automated_metrics"]["sympy_equiv_count"] = results["automated_metrics"].get("sympy_equiv_count", 0) + 1
-            else:
-                results["automated_metrics"]["numeric_close_count"] = results["automated_metrics"].get("numeric_close_count", 0) + (1 if numeric_close else 0)
-                results["automated_metrics"]["levenshtein_scores"].append(levenshtein_score)
 
-            # Always update these metrics regardless of exact match
+            # Count SymPy equivalents (including exact matches)
             if sympy_equivalent:
-                results["automated_metrics"]["sympy_equiv_count"] = results["automated_metrics"].get("sympy_equiv_count", 0) + 1
+                results["automated_metrics"]["sympy_equiv_count"] += 1
+
+            # Count numeric close matches
+            if numeric_close:
+                results["automated_metrics"]["numeric_close_count"] += 1
 
             item_result.update({
                 "reference_solution": reference_solution,
@@ -441,21 +452,21 @@ def evaluate_model(
 
         # Add the three new aggregate metrics
         results["automated_metrics"]["sympy_equiv_rate"] = (
-            results["automated_metrics"]["sympy_equiv_count"] / results["items_with_solutions"]
-        ) if results["items_with_solutions"] > 0 else 0.0
+            results["automated_metrics"].get("sympy_equiv_count", 0) / results["items_with_solutions"]
+        )
 
         results["automated_metrics"]["avg_levenshtein"] = (
-            sum(results["automated_metrics"]["levenshtein_scores"]) /
-            len(results["automated_metrics"]["levenshtein_scores"])
+            sum(results["automated_metrics"].get("levenshtein_scores", [])) /
+            len(results["automated_metrics"].get("levenshtein_scores", []))
         ) if results["automated_metrics"].get("levenshtein_scores") else 0.0
 
         results["automated_metrics"]["numeric_close_rate"] = (
-            results["automated_metrics"].get("numeric_close_count", 0) /
-            results["items_with_solutions"]
-        ) if results["items_with_solutions"] > 0 else 0.0
+            results["automated_metrics"].get("numeric_close_count", 0) / results["items_with_solutions"]
+        )
     else:
         results["automated_metrics"]["exact_match_rate"] = 0.0
         results["automated_metrics"]["avg_bleu_score"] = 0.0
+        results["automated_metrics"]["avg_levenshtein_score"] = 0.0
         results["automated_metrics"]["sympy_equiv_rate"] = 0.0
         results["automated_metrics"]["avg_levenshtein"] = 0.0
         results["automated_metrics"]["numeric_close_rate"] = 0.0
@@ -471,9 +482,13 @@ def evaluate_model(
         print(f"    Exact Match Rate: {results['automated_metrics']['exact_match_rate']:.4f}")
         print(f"    Average BLEU Score: {results['automated_metrics']['avg_bleu_score']:.4f}")
         print(f"    Average Levenshtein Score: {results['automated_metrics']['avg_levenshtein_score']:.4f}")
-        print(f"    Numeric Close Rate: {results['automated_metrics'].get('numeric_close_count', 0)}/{results['items_with_solutions']}")
-        if results['automated_metrics'].get('sympy_equiv_count', 0) > 0:
-            print(f"    SymPy Equivalence Rate: {results['automated_metrics']['sympy_equiv_count']}/{results['items_with_solutions']}")
+        print(f"    Numeric Close Rate: {results['automated_metrics'].get('numeric_close_rate', 0.0):.4f}")
+        sympy_count = results['automated_metrics'].get('sympy_equiv_count', 0)
+        if sympy_count > 0:
+            print(f"    SymPy Equivalence Count: {sympy_count}/{results['items_with_solutions']}")
+        print(f"    SymPy Equivalence Rate: {results['automated_metrics'].get('sympy_equiv_rate', 0.0):.4f}")
+        print(f"    Average Levenshtein: {results['automated_metrics'].get('avg_levenshtein', 0.0):.4f}")
+        print(f"    Numeric Close Rate: {results['automated_metrics'].get('numeric_close_rate', 0.0):.4f}")
 
     return results
 
@@ -532,6 +547,14 @@ def main():
     """Main evaluation function."""
     project_root = Path(__file__).parent.parent
     config_path = project_root / "configs" / "training_config.yaml"
+
+    # Check for optional dependencies
+    try:
+        import Levenshtein
+    except ImportError:
+        print("Note: python-Levenshtein not available. Using fallback similarity metric.")
+        print("For better Levenshtein performance, install: pip install python-Levenshtein")
+        print()
 
     config = load_config(str(config_path))
 
