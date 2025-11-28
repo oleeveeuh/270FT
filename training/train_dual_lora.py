@@ -217,11 +217,10 @@ def create_compute_metrics_fn(tokenizer, metrics_config):
         if "bleu" in metrics_config:
             try:
                 bleu_metric = load_metric("bleu")
-                # BLEU expects list of lists for references
-                references = [[label.split()] for label in decoded_labels]
-                predictions_list = [pred.split() for pred in decoded_preds]
+                # BLEU expects: predictions as list of strings, references as list of list of strings
+                references = [[label] for label in decoded_labels]
                 bleu_results = bleu_metric.compute(
-                    predictions=predictions_list,
+                    predictions=decoded_preds,
                     references=references,
                 )
                 results["eval_bleu"] = bleu_results.get("bleu", 0.0)
