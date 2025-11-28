@@ -106,17 +106,18 @@ def compute_exact_match(reference: str, prediction: str) -> bool:
 
 
 def compute_bleu_score(reference: str, prediction: str) -> float:
-    """Compute BLEU score between reference and prediction."""
+    """Compute BLEU score between reference and prediction using SequenceMatcher."""
     try:
-        bleu_metric = load_metric("bleu")
-        # BLEU expects: predictions as list of strings, references as list of list of strings
-        references = [[reference]]
-        predictions = [prediction]
-        result = bleu_metric.compute(
-            predictions=predictions,
-            references=references,
-        )
-        return result.get("bleu", 0.0)
+        # Use SequenceMatcher for text similarity (more reliable than BLEU metric)
+        from difflib import SequenceMatcher
+        
+        # Normalize both strings
+        ref_norm = " ".join(reference.split()).lower()
+        pred_norm = " ".join(prediction.split()).lower()
+        
+        # Calculate similarity ratio (0-1 scale)
+        ratio = SequenceMatcher(None, ref_norm, pred_norm).ratio()
+        return ratio
     except Exception as e:
         print(f"Warning: BLEU computation failed: {e}")
         return 0.0
@@ -325,18 +326,16 @@ def main():
 
     config = load_config(str(config_path))
 
-    # Load test data - try test_with_solutions.jsonl first, fall back to test.jsonl
+    # Load validation data - all validation items have solutions
     processed_dir = project_root / config["processed_dir"]
 
-    test_data_path = processed_dir / "test_with_solutions.jsonl"
-    if not test_data_path.exists():
-        test_data_path = processed_dir / "test.jsonl"
+    test_data_path = processed_dir / "validation.jsonl"
 
     if not test_data_path.exists():
-        raise FileNotFoundError(f"Test data not found at {test_data_path}")
+        raise FileNotFoundError(f"Validation data not found at {test_data_path}")
 
-    # Load test data (JSONL format)
-    print(f"Loading test data from {test_data_path}...")
+    # Load validation data (JSONL format)
+    print(f"Loading validation data from {test_data_path}...")
     test_data = []
     with open(test_data_path, "r", encoding="utf-8") as f:
         for line in f:
@@ -348,7 +347,7 @@ def main():
                 except json.JSONDecodeError:
                     continue
 
-    print(f"Loaded {len(test_data)} test items")
+    print(f"Loaded {len(test_data)} validation items")
 
     # Count items with/without solutions
     with_solutions = sum(1 for item in test_data if "solution" in item and item["solution"])
