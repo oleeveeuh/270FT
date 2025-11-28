@@ -217,15 +217,38 @@ def create_compute_metrics_fn(tokenizer, metrics_config):
         if "bleu" in metrics_config:
             try:
                 bleu_metric = load_metric("bleu")
+
+                # Convert predictions from token IDs to strings if needed
+                if isinstance(decoded_preds, list) and len(decoded_preds) > 0:
+                    # Handle case where decoded_preds might be token arrays
+                    if isinstance(decoded_preds[0], list) or isinstance(decoded_preds[0], tuple):
+                        # Convert token IDs to strings
+                        pred_strings = []
+                        for pred_tokens in decoded_preds:
+                            if isinstance(pred_tokens, list) or isinstance(pred_tokens, tuple):
+                                pred_string = tokenizer.decode(pred_tokens, skip_special_tokens=True)
+                            else:
+                                pred_string = str(pred_tokens)
+                            pred_strings.append(pred_string)
+                        predictions_bleu = pred_strings
+                    else:
+                        # Already strings or can be converted directly
+                        predictions_bleu = [str(p) for p in decoded_preds]
+                else:
+                    predictions_bleu = []
+
                 # BLEU expects: predictions as list of strings, references as list of list of strings
                 references = [[label] for label in decoded_labels]
+
                 bleu_results = bleu_metric.compute(
-                    predictions=decoded_preds,
+                    predictions=predictions_bleu,
                     references=references,
                 )
                 results["eval_bleu"] = bleu_results.get("bleu", 0.0)
             except Exception as e:
                 print(f"Warning: BLEU computation failed: {e}")
+                print(f"  Debug: predictions type={type(decoded_preds)}, sample={str(decoded_preds[:1])[:100] if decoded_preds else 'empty'}")
+                print(f"  Debug: references type={type(decoded_labels)}, sample={str(decoded_labels[:1])[:100] if decoded_labels else 'empty'}")
                 results["eval_bleu"] = 0.0
         
         # Symbolic equivalence - check if predictions are semantically similar to references
