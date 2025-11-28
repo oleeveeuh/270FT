@@ -2,23 +2,6 @@ data_dir: "data/raw"
 processed_dir: "data/processed"
 
 models:
-  - name: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    output_dir: "models/tinyllama_1.1b_lora"
-
-  - name: "Qwen/Qwen2.5-7B-Instruct"
-    output_dir: "models/qwen2.5_7b_lora"
-
-  - name: "microsoft/Phi-3.5-mini-instruct"
-    output_dir: "models/phi3.5_mini_lora"
-
-  - name: "google/gemma-2-2b-it"
-    output_dir: "models/gemma2_2b_lora"
-
-  - name: "mistralai/Mistral-7B-Instruct-v0.3"
-    output_dir: "models/mistral_7b_lora"
-
-
-models:
   # ============================================================
   # SMALL MODELS (1.1B - 3.8B)
   # ============================================================
