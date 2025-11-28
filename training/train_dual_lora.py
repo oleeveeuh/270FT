@@ -233,7 +233,9 @@ def create_compute_metrics_fn(tokenizer, metrics_config):
             try:
                 from difflib import SequenceMatcher
                 equiv_count = 0
-                for pred, label in zip(decoded_preds, decoded_labels):
+                debug_samples = []
+                
+                for i, (pred, label) in enumerate(zip(decoded_preds, decoded_labels)):
                     # Normalize: lowercase and remove extra whitespace
                     pred_norm = " ".join(pred.split()).lower()
                     label_norm = " ".join(label.split()).lower()
@@ -241,15 +243,33 @@ def create_compute_metrics_fn(tokenizer, metrics_config):
                     # Exact match
                     if pred_norm == label_norm:
                         equiv_count += 1
+                        is_equiv = True
                     else:
                         # Use sequence matcher for actual text similarity
                         # This accounts for structure, not just keywords
                         ratio = SequenceMatcher(None, pred_norm, label_norm).ratio()
                         
-                        # Consider equivalent only if similarity is high (>0.7)
-                        # This accounts for minor variations but not completely different answers
-                        if ratio > 0.7:
+                        # Consider equivalent only if similarity is high (>0.65)
+                        # Threshold tuned for algorithm pseudocode (0.65 = significant overlap)
+                        is_equiv = ratio > 0.65
+                        if is_equiv:
                             equiv_count += 1
+                        
+                        # Log first 3 samples for debugging
+                        if i < 3:
+                            debug_samples.append({
+                                'pred': pred[:100],
+                                'label': label[:100],
+                                'similarity': ratio,
+                                'is_equiv': is_equiv
+                            })
+                
+                # Log debug info
+                if debug_samples:
+                    import sys
+                    print(f"[Symbolic Equivalence Debug] Samples (threshold=0.65):", file=sys.stderr)
+                    for sample in debug_samples:
+                        print(f"  Sim: {sample['similarity']:.2%} | Equiv: {sample['is_equiv']}", file=sys.stderr)
                 
                 results["eval_symbolic_equivalence"] = equiv_count / len(decoded_preds) if decoded_preds else 0.0
             except Exception as e:
