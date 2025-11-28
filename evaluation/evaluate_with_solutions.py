@@ -109,8 +109,9 @@ def compute_bleu_score(reference: str, prediction: str) -> float:
     """Compute BLEU score between reference and prediction."""
     try:
         bleu_metric = load_metric("bleu")
-        references = [[reference.split()]]
-        predictions = [prediction.split()]
+        # BLEU expects: predictions as list of strings, references as list of list of strings
+        references = [[reference]]
+        predictions = [prediction]
         result = bleu_metric.compute(
             predictions=predictions,
             references=references,
