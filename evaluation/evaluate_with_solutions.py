@@ -326,16 +326,18 @@ def main():
 
     config = load_config(str(config_path))
 
-    # Load validation data - all validation items have solutions
+    # Load test data - try test_with_solutions.jsonl first, fall back to test.jsonl
     processed_dir = project_root / config["processed_dir"]
 
-    test_data_path = processed_dir / "validation.jsonl"
+    test_data_path = processed_dir / "test_with_solutions.jsonl"
+    if not test_data_path.exists():
+        test_data_path = processed_dir / "test.jsonl"
 
     if not test_data_path.exists():
-        raise FileNotFoundError(f"Validation data not found at {test_data_path}")
+        raise FileNotFoundError(f"Test data not found at {test_data_path}")
 
-    # Load validation data (JSONL format)
-    print(f"Loading validation data from {test_data_path}...")
+    # Load test data (JSONL format)
+    print(f"Loading test data from {test_data_path}...")
     test_data = []
     with open(test_data_path, "r", encoding="utf-8") as f:
         for line in f:
@@ -347,7 +349,7 @@ def main():
                 except json.JSONDecodeError:
                     continue
 
-    print(f"Loaded {len(test_data)} validation items")
+    print(f"Loaded {len(test_data)} test items")
 
     # Count items with/without solutions
     with_solutions = sum(1 for item in test_data if "solution" in item and item["solution"])
