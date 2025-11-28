@@ -228,12 +228,13 @@ def create_compute_metrics_fn(tokenizer, metrics_config):
                 print(f"Warning: BLEU computation failed: {e}")
                 results["eval_bleu"] = 0.0
         
-        # Symbolic equivalence - check structural similarity for pseudocode
+        # Symbolic equivalence - check if predictions are semantically similar to references
         if "symbolic_equivalence" in metrics_config:
             try:
+                from difflib import SequenceMatcher
                 equiv_count = 0
                 for pred, label in zip(decoded_preds, decoded_labels):
-                    # Normalize both strings: lowercase and strip whitespace
+                    # Normalize: lowercase and remove extra whitespace
                     pred_norm = " ".join(pred.split()).lower()
                     label_norm = " ".join(label.split()).lower()
                     
@@ -241,20 +242,14 @@ def create_compute_metrics_fn(tokenizer, metrics_config):
                     if pred_norm == label_norm:
                         equiv_count += 1
                     else:
-                        # Check structural similarity: presence of key algorithm keywords
-                        keywords = ["return", "def", "if", "while", "for", "mod", "n", "p", "a"]
-                        pred_keywords = {k for k in keywords if k in pred_norm}
-                        label_keywords = {k for k in keywords if k in label_norm}
+                        # Use sequence matcher for actual text similarity
+                        # This accounts for structure, not just keywords
+                        ratio = SequenceMatcher(None, pred_norm, label_norm).ratio()
                         
-                        if pred_keywords and label_keywords:
-                            # Calculate keyword overlap
-                            overlap = len(pred_keywords & label_keywords)
-                            union = len(pred_keywords | label_keywords)
-                            jaccard_sim = overlap / union if union > 0 else 0
-                            
-                            # Consider equivalent if Jaccard similarity > 0.5
-                            if jaccard_sim > 0.5:
-                                equiv_count += 1
+                        # Consider equivalent only if similarity is high (>0.7)
+                        # This accounts for minor variations but not completely different answers
+                        if ratio > 0.7:
+                            equiv_count += 1
                 
                 results["eval_symbolic_equivalence"] = equiv_count / len(decoded_preds) if decoded_preds else 0.0
             except Exception as e:
