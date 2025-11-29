@@ -218,12 +218,24 @@ def evaluate_model(
         question = item.get("question", "")
         reference_solution = item.get("solution", None)
 
+        # Enhanced debugging to track why items might be skipped
+        print(f"DEBUG Item {idx}: has_question={bool(question)}, has_solution={reference_solution is not None}")
+
         if not question:
             print(f"Warning: Skipping item {idx + 1} - missing question")
+            print(f"DEBUG: Item {idx} content: {item}")
             continue
 
         # Generate prediction
-        prediction = generate_solution(model, tokenizer, question)
+        try:
+            prediction = generate_solution(model, tokenizer, question)
+            if not prediction:  # Check if generation returned empty result
+                print(f"Warning: Skipping item {idx + 1} - empty prediction generated")
+                continue
+        except Exception as e:
+            print(f"Warning: Skipping item {idx + 1} - prediction generation failed: {e}")
+            print(f"DEBUG: Item {idx} content: {item}")
+            continue
 
         # Automated quality checks (always run)
         quality_check = automated_quality_check(question, prediction)
@@ -356,13 +368,19 @@ def main():
     print(f"Loading test data from {test_data_path}...")
     test_data = []
     with open(test_data_path, "r", encoding="utf-8") as f:
-        for line in f:
+        for line_num, line in enumerate(f, 1):
             line = line.strip()
             if line:
                 try:
                     item = json.loads(line)
                     test_data.append(item)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as e:
+                    print(f"Warning: JSON decode error on line {line_num}: {e}")
+                    print(f"DEBUG: Problem line content: {line[:200]}...")
+                    continue
+                except Exception as e:
+                    print(f"Warning: Unexpected error on line {line_num}: {e}")
+                    print(f"DEBUG: Problem line content: {line[:200]}...")
                     continue
 
     print(f"Loaded {len(test_data)} test items")
