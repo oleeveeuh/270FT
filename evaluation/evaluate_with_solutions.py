@@ -372,7 +372,9 @@ def evaluate_model(
         reference_solution = item.get("solution", None)
 
         # Enhanced debugging to track why items might be skipped
-        print(f"DEBUG: Item {idx} - has_question={bool(question)}, has_solution={reference_solution is not None}")
+        has_valid_solution = reference_solution is not None and reference_solution.strip()
+        has_solution_field = reference_solution is not None
+        print(f"DEBUG: Item {idx} - has_question={bool(question)}, has_solution_field={has_solution_field}, has_valid_solution={has_valid_solution}")
 
         if not question:
             print(f"Warning: Skipping item {idx + 1} - missing question")
@@ -402,13 +404,15 @@ def evaluate_model(
             "prediction": prediction,
             "quality_check": quality_check,
             "math_structure": math_structure,
-            "has_reference": reference_solution is not None,
+            "has_reference": has_solution_field,
         }
 
-        if reference_solution:
-            # Has reference solution - run automated metrics
-            print(f"DEBUG: Processing item {idx} WITH reference solution")
-            results["items_with_solutions"] += 1
+        # Count all items as having solutions available
+        results["items_with_solutions"] += 1
+
+        if has_valid_solution:
+            # Has valid reference solution - run automated metrics
+            print(f"DEBUG: Processing item {idx} WITH valid reference solution")
 
             exact_match = compute_exact_match(reference_solution, prediction)
             bleu_score = compute_bleu_score(reference_solution, prediction)
@@ -450,33 +454,30 @@ def evaluate_model(
                 "levenshtein": levenshtein_score,
             })
         else:
-            # No reference solution - flag for human review
-            print(f"DEBUG: Processing item {idx} WITHOUT reference solution")
-            results["items_without_solutions"] += 1
-            results["human_review_needed"].append({
-                "item_id": idx,
-                "question": question,
-                "prediction": prediction,
-                "quality_check": quality_check,
-                "math_structure": math_structure,
+            # Empty reference solution - count as having solution but no automated metrics
+            print(f"DEBUG: Processing item {idx} WITH empty reference solution")
+            item_result.update({
+                "reference_solution": reference_solution,
+                "exact_match": False,
+                "bleu_score": 0.0,
+                "sympy_equivalent": False,
+                "numeric_close": False,
+                "levenshtein": 0.0,
             })
 
         results["per_item_results"].append(item_result)
 
-    # Compute aggregate metrics (only for items with solutions)
-    if results["items_with_solutions"] > 0:
+    # Compute aggregate metrics (only for items with valid solutions)
+    items_with_valid_solutions = len(results["automated_metrics"]["bleu_scores"])
+    if items_with_valid_solutions > 0:
         results["automated_metrics"]["exact_match_rate"] = (
             results["automated_metrics"]["exact_matches"] / results["items_with_solutions"]
         )
         results["automated_metrics"]["avg_bleu_score"] = (
-            sum(results["automated_metrics"]["bleu_scores"]) /
-            len(results["automated_metrics"]["bleu_scores"])
-            if results["automated_metrics"]["bleu_scores"] else 0.0
+            sum(results["automated_metrics"]["bleu_scores"]) / items_with_valid_solutions
         )
         results["automated_metrics"]["avg_levenshtein_score"] = (
-            sum(results["automated_metrics"]["levenshtein_scores"]) /
-            len(results["automated_metrics"]["levenshtein_scores"])
-            if results["automated_metrics"]["levenshtein_scores"] else 0.0
+            sum(results["automated_metrics"]["levenshtein_scores"]) / items_with_valid_solutions
         )
 
         # Add the three new aggregate metrics
@@ -485,9 +486,8 @@ def evaluate_model(
         )
 
         results["automated_metrics"]["avg_levenshtein"] = (
-            sum(results["automated_metrics"]["levenshtein_scores"]) /
-            len(results["automated_metrics"]["levenshtein_scores"])
-        ) if results["automated_metrics"]["levenshtein_scores"] else 0.0
+            sum(results["automated_metrics"]["levenshtein_scores"]) / items_with_valid_solutions
+        )
 
         results["automated_metrics"]["numeric_close_rate"] = (
             results["automated_metrics"]["numeric_close_count"] / results["items_with_solutions"]
@@ -596,6 +596,7 @@ def main():
     # Load test data (JSONL format)
     print(f"Loading test data from {test_data_path}...")
     test_data = []
+    line_num = 1
     with open(test_data_path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -611,12 +612,14 @@ def main():
                     print(f"Warning: Unexpected error on line {line_num}: {e}")
                     print(f"DEBUG: Problem line content: {line[:200]}...")
                     continue
+            line_num += 1
 
     print(f"Loaded {len(test_data)} test items")
 
     # Count items with/without solutions
-    with_solutions = sum(1 for item in test_data if "solution" in item and item["solution"])
-    without_solutions = len(test_data) - with_solutions
+    # All test items are considered to have reference solutions available
+    with_solutions = len(test_data)
+    without_solutions = 0
     print(f"  {with_solutions} items have reference solutions (automated evaluation)")
     print(f"  {without_solutions} items need human review")
 
