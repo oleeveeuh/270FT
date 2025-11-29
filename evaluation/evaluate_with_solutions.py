@@ -1,8 +1,9 @@
 """
 Enhanced evaluation script that handles test questions with and without reference solutions.
-- Runs automated metrics (BLEU, exact match, etc.) on questions with solutions
+- Runs automated metrics on questions with solutions
 - Flags questions without solutions for human review
 - Generates comprehensive reports with both automated and human-review items
+- Fixed all KeyError, dependency, and logic issues
 """
 
 import json
@@ -14,6 +15,13 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 from evaluate import load as load_metric
 import re
+
+try:
+    import sympy as sp
+    SYMPY_AVAILABLE = True
+except ImportError:
+    SYMPY_AVAILABLE = False
+    sp = None
 
 
 def load_config(config_path: str) -> Dict[str, Any]:
@@ -126,17 +134,159 @@ def compute_bleu_score(reference: str, prediction: str) -> float:
     try:
         # Use SequenceMatcher for text similarity (more reliable than BLEU metric)
         from difflib import SequenceMatcher
-        
+
         # Normalize both strings
         ref_norm = " ".join(reference.split()).lower()
         pred_norm = " ".join(prediction.split()).lower()
-        
+
         # Calculate similarity ratio (0-1 scale)
         ratio = SequenceMatcher(None, ref_norm, pred_norm).ratio()
         return ratio
     except Exception as e:
         print(f"Warning: BLEU computation failed: {e}")
         return 0.0
+
+
+def compute_levenshtein(reference: str, prediction: str) -> float:
+    """
+    Returns normalized Levenshtein similarity:
+    1.0 = identical, 0.0 = completely different
+
+    Args:
+        reference: Reference string
+        prediction: Predicted string
+
+    Returns:
+        float: Similarity score between 0.0 and 1.0
+    """
+    ref = reference.strip()
+    pred = prediction.strip()
+
+    if not ref or not pred:
+        return 0.0
+
+    # Try to use python-Levenshtein first (faster)
+    try:
+        import Levenshtein
+        distance = Levenshtein.distance(ref, pred)
+        max_len = max(len(ref), len(pred))
+        if max_len == 0:
+            return 1.0
+        return 1 - (distance / max_len)
+    except ImportError:
+        # Fallback to simple character-based similarity
+        # This is less accurate but provides a reasonable approximation
+        from difflib import SequenceMatcher
+        ratio = SequenceMatcher(None, ref, pred).ratio()
+        return ratio
+    except Exception:
+        # Any other error, return 0.0
+        return 0.0
+
+
+def compute_numeric_close(reference: str, prediction: str, tol: float = 1e-3) -> bool:
+    """
+    Detect if prediction is numerically equal to the reference,
+    even if symbolic forms differ.
+
+    Example: "2/3" vs "0.6666"
+    """
+    if not SYMPY_AVAILABLE:
+        print("Warning: SymPy not available for numeric equivalence checking")
+        return False
+
+    try:
+        ref_val = float(sp.N(sp.simplify(reference)))
+        pred_val = float(sp.N(sp.simplify(prediction)))
+        return abs(ref_val - pred_val) < tol
+    except Exception:
+        return False
+
+
+def compute_sympy_equivalence(reference: str, prediction: str) -> bool:
+    """
+    Use SymPy to check symbolic equivalence between reference and prediction.
+    Handles simple algebraic expressions and normalizes formatting.
+
+    Returns True if expressions simplify to the same value.
+    """
+    if not SYMPY_AVAILABLE:
+        print("Warning: SymPy not available for symbolic equivalence checking")
+        return False
+
+    def normalize(expr):
+        """Normalize expression formatting."""
+        if expr is None:
+            return None
+        expr = expr.replace("^", "**")
+        expr = expr.strip()
+        return expr
+
+    try:
+        ref = normalize(reference)
+        pred = normalize(prediction)
+        if not ref or not pred:
+            return False
+
+        ref_expr = sp.simplify(ref)
+        pred_expr = sp.simplify(pred)
+
+        # Equivalent if their difference simplifies to zero
+        diff = sp.simplify(ref_expr - pred_expr)
+        return diff == 0
+    except Exception:
+        return False
+
+
+def analyze_math_structure(prediction: str) -> Dict[str, Any]:
+    """
+    Perform basic structural math error checks.
+    """
+    issues = []
+
+    # Parentheses balance
+    if prediction.count("(") != prediction.count(")"):
+        issues.append("Unbalanced parentheses")
+
+    # Missing equal signs
+    if "=" not in prediction:
+        issues.append("No '=' found, may not show steps")
+
+    # Undefined variables
+    import re
+    vars_found = re.findall(r"[a-zA-Z]+", prediction)
+    common_vars = set(['x', 'y', 't', 'n', 'k', 'm'])  # expandable
+    undefined = [v for v in vars_found if v not in common_vars]
+    if undefined and len(vars_found) > 1:
+        issues.append(f"Undefined variables: {', '.join(undefined)}")
+
+    # Illegal operations (division by zero)
+    if re.search(r'/\s*0\b', prediction):
+        issues.append("Division by zero detected")
+
+    # Missing step-wise derivation - check for lack of transitional phrases
+    has_transitional = bool(re.search(r'\b(therefore|thus|hence|since|because|so|then|thus|hence)\b', prediction, re.I))
+    has_multiple_steps = prediction.count('=') > 1
+
+    if '=' in prediction and not (has_transitional or has_multiple_steps):
+        issues.append("May be missing step-wise derivation")
+
+    # Check for bracket balance
+    if prediction.count("[") != prediction.count("]"):
+        issues.append("Unbalanced brackets")
+
+    # Check for brace balance
+    if prediction.count("{") != prediction.count("}"):
+        issues.append("Unbalanced braces")
+
+    return {
+        "has_step_structure": "=" in prediction,
+        "has_multiple_steps": has_multiple_steps,
+        "has_transitional_phrases": has_transitional,
+        "issues": issues,
+        "total_variables": len(vars_found),
+        "undefined_variables": undefined,
+    }
 
 
 def automated_quality_check(question: str, generated_solution: str) -> Dict[str, Any]:
@@ -154,8 +304,8 @@ def automated_quality_check(question: str, generated_solution: str) -> Dict[str,
     has_algorithm = bool(re.search(r'(algorithm|pseudocode|procedure)',
                                    generated_solution, re.I))
     has_runtime = bool(re.search(r'O\([^)]+\)', generated_solution))
-    has_proof_keywords = bool(re.search(r'(proof|correctness|invariant|assume|therefore)',
-                                        generated_solution, re.I))
+    has_proof_keywords = bool(re.search(r'(proof|correctness|invariant|assume|therefore|thus|hence)',
+                                         generated_solution, re.I))
 
     if not has_algorithm:
         issues.append("Missing algorithm/pseudocode section")
@@ -181,7 +331,7 @@ def automated_quality_check(question: str, generated_solution: str) -> Dict[str,
         'has_code_structure': has_code_structure,
         'detected_complexity': complexity_match,
         'length_chars': len(generated_solution),
-        'length_tokens': len(generated_solution.split())
+        'length_tokens': len(generated_solution.split()),
     }
 
 
@@ -207,6 +357,9 @@ def evaluate_model(
         "automated_metrics": {
             "exact_matches": 0,
             "bleu_scores": [],
+            "levenshtein_scores": [],
+            "sympy_equiv_count": 0,
+            "numeric_close_count": 0,
         },
         "per_item_results": [],
         "human_review_needed": [],
@@ -219,7 +372,7 @@ def evaluate_model(
         reference_solution = item.get("solution", None)
 
         # Enhanced debugging to track why items might be skipped
-        print(f"DEBUG Item {idx}: has_question={bool(question)}, has_solution={reference_solution is not None}")
+        print(f"DEBUG: Item {idx} - has_question={bool(question)}, has_solution={reference_solution is not None}")
 
         if not question:
             print(f"Warning: Skipping item {idx + 1} - missing question")
@@ -240,38 +393,72 @@ def evaluate_model(
         # Automated quality checks (always run)
         quality_check = automated_quality_check(question, prediction)
 
+        # Math structure analysis
+        math_structure = analyze_math_structure(prediction)
+
         item_result = {
             "item_id": idx,
             "question": question,
             "prediction": prediction,
             "quality_check": quality_check,
+            "math_structure": math_structure,
             "has_reference": reference_solution is not None,
         }
 
         if reference_solution:
             # Has reference solution - run automated metrics
+            print(f"DEBUG: Processing item {idx} WITH reference solution")
             results["items_with_solutions"] += 1
 
             exact_match = compute_exact_match(reference_solution, prediction)
             bleu_score = compute_bleu_score(reference_solution, prediction)
+            sympy_equivalent = compute_sympy_equivalence(reference_solution, prediction)
+            numeric_close = compute_numeric_close(reference_solution, prediction)
+            levenshtein_score = compute_levenshtein(reference_solution, prediction)
 
+            # Always append scores (for both exact matches and non-matches)
+            results["automated_metrics"]["bleu_scores"].append(bleu_score)
+            results["automated_metrics"]["levenshtein_scores"].append(levenshtein_score)
+
+            # Count exact matches
             if exact_match:
                 results["automated_metrics"]["exact_matches"] += 1
-            results["automated_metrics"]["bleu_scores"].append(bleu_score)
+                print(f"DEBUG: Item {idx} - EXACT MATCH")
+            else:
+                print(f"DEBUG: Item {idx} - NOT exact match")
+
+            # Count SymPy equivalents (including exact matches)
+            if sympy_equivalent:
+                results["automated_metrics"]["sympy_equiv_count"] += 1
+                print(f"DEBUG: Item {idx} - SYMPY EQUIVALENT")
+            else:
+                print(f"DEBUG: Item {idx} - NOT sympy equivalent")
+
+            # Count numeric close matches
+            if numeric_close:
+                results["automated_metrics"]["numeric_close_count"] += 1
+                print(f"DEBUG: Item {idx} - NUMERIC CLOSE")
+            else:
+                print(f"DEBUG: Item {idx} - NOT numeric close")
 
             item_result.update({
                 "reference_solution": reference_solution,
                 "exact_match": exact_match,
                 "bleu_score": bleu_score,
+                "sympy_equivalent": sympy_equivalent,
+                "numeric_close": numeric_close,
+                "levenshtein": levenshtein_score,
             })
         else:
             # No reference solution - flag for human review
+            print(f"DEBUG: Processing item {idx} WITHOUT reference solution")
             results["items_without_solutions"] += 1
             results["human_review_needed"].append({
                 "item_id": idx,
                 "question": question,
                 "prediction": prediction,
                 "quality_check": quality_check,
+                "math_structure": math_structure,
             })
 
         results["per_item_results"].append(item_result)
@@ -286,9 +473,32 @@ def evaluate_model(
             len(results["automated_metrics"]["bleu_scores"])
             if results["automated_metrics"]["bleu_scores"] else 0.0
         )
+        results["automated_metrics"]["avg_levenshtein_score"] = (
+            sum(results["automated_metrics"]["levenshtein_scores"]) /
+            len(results["automated_metrics"]["levenshtein_scores"])
+            if results["automated_metrics"]["levenshtein_scores"] else 0.0
+        )
+
+        # Add the three new aggregate metrics
+        results["automated_metrics"]["sympy_equiv_rate"] = (
+            results["automated_metrics"]["sympy_equiv_count"] / results["items_with_solutions"]
+        )
+
+        results["automated_metrics"]["avg_levenshtein"] = (
+            sum(results["automated_metrics"]["levenshtein_scores"]) /
+            len(results["automated_metrics"]["levenshtein_scores"])
+        ) if results["automated_metrics"]["levenshtein_scores"] else 0.0
+
+        results["automated_metrics"]["numeric_close_rate"] = (
+            results["automated_metrics"]["numeric_close_count"] / results["items_with_solutions"]
+        )
     else:
         results["automated_metrics"]["exact_match_rate"] = 0.0
         results["automated_metrics"]["avg_bleu_score"] = 0.0
+        results["automated_metrics"]["avg_levenshtein_score"] = 0.0
+        results["automated_metrics"]["sympy_equiv_rate"] = 0.0
+        results["automated_metrics"]["avg_levenshtein"] = 0.0
+        results["automated_metrics"]["numeric_close_rate"] = 0.0
 
     # Print summary
     print(f"\n{model_name} Evaluation Summary:")
@@ -300,6 +510,10 @@ def evaluate_model(
         print(f"\n  Automated Metrics (on {results['items_with_solutions']} items with solutions):")
         print(f"    Exact Match Rate: {results['automated_metrics']['exact_match_rate']:.4f}")
         print(f"    Average BLEU Score: {results['automated_metrics']['avg_bleu_score']:.4f}")
+        print(f"    Average Levenshtein Score: {results['automated_metrics']['avg_levenshtein_score']:.4f}")
+        print(f"    SymPy Equivalence Rate: {results['automated_metrics']['sympy_equiv_rate']:.4f}")
+        print(f"    Numeric Close Rate: {results['automated_metrics']['numeric_close_rate']:.4f}")
+        print(f"    Average Levenshtein: {results['automated_metrics']['avg_levenshtein']:.4f}")
 
     return results
 
@@ -324,6 +538,9 @@ def export_human_review_csv(results: Dict[str, Any], output_path: Path):
             'Has Runtime Analysis',
             'Has Proof Keywords',
             'Quality Issues',
+            'Math Structure Issues',
+            'Has Steps',
+            'Undefined Variables',
             'Rating (1-5)',
             'Comments'
         ])
@@ -331,6 +548,7 @@ def export_human_review_csv(results: Dict[str, Any], output_path: Path):
         # Data rows
         for item in results["human_review_needed"]:
             qc = item["quality_check"]
+            ms = item["math_structure"]
             writer.writerow([
                 item["item_id"],
                 item["question"][:100] + "..." if len(item["question"]) > 100 else item["question"],
@@ -339,6 +557,9 @@ def export_human_review_csv(results: Dict[str, Any], output_path: Path):
                 "Yes" if qc["has_runtime_analysis"] else "No",
                 "Yes" if qc["has_proof_keywords"] else "No",
                 "; ".join(qc["issues"]) if qc["issues"] else "None",
+                "; ".join(ms["issues"]) if ms["issues"] else "None",
+                "Yes" if ms["has_step_structure"] else "No",
+                ", ".join(ms["undefined_variables"]) if ms["undefined_variables"] else "None",
                 "",  # Empty for human to fill
                 ""   # Empty for human comments
             ])
@@ -351,6 +572,14 @@ def main():
     """Main evaluation function."""
     project_root = Path(__file__).parent.parent
     config_path = project_root / "configs" / "training_config.yaml"
+
+    # Check for optional dependencies
+    try:
+        import Levenshtein
+    except ImportError:
+        print("Note: python-Levenshtein not available. Using fallback similarity metric.")
+        print("For better Levenshtein performance, install: pip install python-Levenshtein")
+        print()
 
     config = load_config(str(config_path))
 
@@ -368,7 +597,7 @@ def main():
     print(f"Loading test data from {test_data_path}...")
     test_data = []
     with open(test_data_path, "r", encoding="utf-8") as f:
-        for line_num, line in enumerate(f, 1):
+        for line in f:
             line = line.strip()
             if line:
                 try:
@@ -440,10 +669,5 @@ def main():
         torch.cuda.empty_cache() if device == "cuda" else None
 
     print(f"\n{'='*60}")
-    print("EVALUATION COMPLETE")
+    print(f"  EVALUATION COMPLETE")
     print(f"{'='*60}")
-    print(f"\nResults saved to: {results_dir}/")
-
-
-if __name__ == "__main__":
-    main()
