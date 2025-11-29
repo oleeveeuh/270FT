@@ -671,3 +671,6 @@ def main():
     print(f"\n{'='*60}")
     print(f"  EVALUATION COMPLETE")
     print(f"{'='*60}")
+
+if __name__ == "__main__":
+    main()
