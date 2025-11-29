@@ -226,7 +226,7 @@ def evaluate_model(
             print(f"DEBUG: Item {idx} content: {item}")
             continue
 
-        # Generate prediction
+        # Generate prediction with comprehensive error handling
         try:
             prediction = generate_solution(model, tokenizer, question)
             if not prediction:  # Check if generation returned empty result
